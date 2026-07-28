@@ -258,6 +258,11 @@ fn handle_link(ui: &mut Ui, size: f32) {
     resp.on_hover_text(HANDLE_URL);
 }
 
+/// Vertical space a [`card`] spends on itself before any content: both inner
+/// margins, the title line, the gap under it, and the stroke on both edges.
+/// Callers that hand a card an exact height have to subtract it.
+pub(crate) const CARD_CHROME_H: f32 = 12.0 + 12.0 + 15.0 + 8.0 + 2.0;
+
 fn card(ui: &mut Ui, title: &str, accent: Color32, add: impl FnOnce(&mut Ui)) {
     egui::Frame::none()
         .fill(PANEL)
@@ -711,7 +716,13 @@ impl GuiApp {
                     ui.columns(2, |c| {
                         c[0].set_min_height(rest);
                         c[1].set_min_height(rest);
-                        let inner = rest - 26.0;
+                        // A card is more than its contents: 12 + 12 of inner
+                        // margin, the title line, the gap below it and a 1px
+                        // stroke top and bottom. Subtracting too little made
+                        // both cards taller than the space they had been given,
+                        // and the window simply cut their lower edge off — on a
+                        // 900-point-high screen there is no room to grow into.
+                        let inner = (rest - CARD_CHROME_H).max(60.0);
                         self.draw_hits(&mut c[0], inner);
                         self.draw_seed(&mut c[1], inner);
                     });
