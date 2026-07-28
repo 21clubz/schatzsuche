@@ -144,6 +144,8 @@ frei. Was erkannt wurde, steht in den Einstellungen und beim Terminalstart:
 Maschine   : 8 Kerne erkannt — 4 schnelle, 4 sparsame → 4 Arbeiter automatisch
 ```
 
+![Die Einstellungen: die erkannte Hardware und drei daraus abgeleitete Voreinstellungen von sparsam bis maximal.](docs/einstellungen.png)
+
 Warum nicht alles? Weil die zweite Hälfte am wenigsten bringt (siehe Tabelle:
 vier Kerne erreichen 72 % von acht) und ein Rechner, dem man alle Kerne
 weggenommen hat, sich nicht mehr wie der eigene anfühlt. Wer es anders will,
