@@ -293,7 +293,7 @@ Gemessen gegen 5 Mio. Einträge: 2 Fehlalarme auf 2,39 Mio. Abfragen (8,4e-7) be
 cargo test --release
 ```
 
-99 Tests. Die tragenden:
+100 Tests. Die tragenden:
 
 * BIP-39/32/44/49/84-Ableitung gegen die Referenzbibliotheken `bitcoin` und
   `bip39` über zufällige Seeds, plus die veröffentlichten Testvektoren.

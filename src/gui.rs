@@ -126,14 +126,32 @@ impl GuiApp {
     ///   cores, so **eight threads are slower than four** — 509/s against
     ///   637/s measured. A linear estimate would have promised the opposite.
     fn expected_share(&self, threads: usize, priority: Priority) -> f64 {
-        // (threads, share of this machine's peak), measured on an idle M1.
-        // Not assumed linear, because it is nothing of the sort:
-        //
-        // * Utility priority plateaus near 42% however many cores are given to
-        //   it — macOS keeps that tier off the performance cores.
-        // * Background peaks at six cores and gets *worse* at eight, since the
-        //   work is confined to four efficiency cores that then contend.
-        // * Only Normal scales the way one would naively expect.
+        Self::share_at(threads, physical_cores(), priority)
+    }
+
+    /// True when the chosen combination is self-defeating on this machine.
+    fn is_counterproductive(&self, threads: usize, priority: Priority) -> bool {
+        Self::counterproductive_at(threads, physical_cores(), priority)
+    }
+
+    /// The measured throughput curve, for a machine with `max_cores` cores.
+    ///
+    /// Takes the core count rather than reading it, because a question like "do
+    /// more cores mean more throughput" only has an answer once the machine is
+    /// named. Reading the count in here made the model untestable: on a
+    /// four-core CI runner, four and eight threads both landed at the end of
+    /// the curve, came out equal, and the test asserting that the curve rises
+    /// failed on hardware that was never the point.
+    ///
+    /// Not assumed linear, because it is nothing of the sort:
+    ///
+    /// * Utility priority plateaus near 42% however many cores are given to it —
+    ///   macOS keeps that tier off the performance cores.
+    /// * Background peaks at six cores and gets *worse* at eight, since the work
+    ///   is confined to four efficiency cores that then contend.
+    /// * Only Normal scales the way one would naively expect.
+    pub(crate) fn share_at(threads: usize, max_cores: usize, priority: Priority) -> f64 {
+        // (threads, share of peak), measured on an idle eight-core M1.
         const BACKGROUND: [(f64, f64); 5] = [
             (1.0, 0.057),
             (2.0, 0.096),
@@ -162,9 +180,9 @@ impl GuiApp {
             Priority::Normal => &NORMAL,
         };
 
-        // Rescale to this machine's core count so the curve still means
-        // something on hardware that is not an eight-core M1.
-        let max = physical_cores().max(1) as f64;
+        // Rescale to the machine's core count so the curve still means something
+        // on hardware that is not an eight-core M1.
+        let max = max_cores.max(1) as f64;
         let t = (threads.max(1) as f64) * 8.0 / max;
 
         if t <= curve[0].0 {
@@ -180,9 +198,15 @@ impl GuiApp {
         curve[curve.len() - 1].1
     }
 
-    /// True when the chosen combination is self-defeating.
-    fn is_counterproductive(&self, threads: usize, priority: Priority) -> bool {
-        priority == Priority::Background && threads > physical_cores() * 3 / 4
+    /// True when the chosen combination is self-defeating: background priority is
+    /// confined to the slow cores, so asking for most of the machine there buys
+    /// contention rather than throughput.
+    pub(crate) fn counterproductive_at(
+        threads: usize,
+        max_cores: usize,
+        priority: Priority,
+    ) -> bool {
+        priority == Priority::Background && threads > max_cores.max(1) * 3 / 4
     }
 
     fn drain(&mut self) {
@@ -1530,27 +1554,17 @@ mod tests {
 
     #[test]
     fn throughput_model_reflects_the_measurements() {
-        use std::sync::mpsc::channel;
-        let (_tx, rx) = channel();
-        let app = GuiApp::new(
-            Arc::new(Stats::new()),
-            Arc::new(Control::new(4, 20, Priority::Utility)),
-            rx,
-            Vec::new(),
-            5_000_000,
-            60,
-            256,
-            8,
-            0,
-            0,
-            None,
-            None,
-        );
+        // The eight-core M1 the curve was measured on, named explicitly. The
+        // machine running the test is irrelevant here and must stay that way:
+        // asking for eight threads on a four-core runner used to fold the top
+        // of the curve onto itself and fail an assertion about the curve.
+        const M1: usize = 8;
+        let share = |t: usize, p: Priority| GuiApp::share_at(t, M1, p);
 
         // More cores must mean more throughput at normal priority.
         let normal: Vec<f64> = [1usize, 2, 4, 8]
             .iter()
-            .map(|&t| app.expected_share(t, Priority::Normal))
+            .map(|&t| share(t, Priority::Normal))
             .collect();
         assert!(
             normal.windows(2).all(|w| w[1] > w[0]),
@@ -1559,23 +1573,44 @@ mod tests {
 
         // Background priority is the exception: past half the cores it gets
         // worse, because the work is confined to the efficiency cores.
-        let bg8 = app.expected_share(8, Priority::Background);
-        let bg4 = app.expected_share(4, Priority::Background);
+        let bg8 = share(8, Priority::Background);
+        let bg4 = share(4, Priority::Background);
         assert!(
             bg8 < bg4,
             "background at 8 cores measured slower than at 4: {bg8} vs {bg4}"
         );
-        assert!(app.is_counterproductive(8, Priority::Background));
-        assert!(!app.is_counterproductive(4, Priority::Background));
-        assert!(!app.is_counterproductive(8, Priority::Normal));
+        assert!(GuiApp::counterproductive_at(8, M1, Priority::Background));
+        assert!(!GuiApp::counterproductive_at(4, M1, Priority::Background));
+        assert!(!GuiApp::counterproductive_at(8, M1, Priority::Normal));
 
         // Background must always be well below normal at the same core count.
         for t in [2usize, 4] {
             assert!(
-                app.expected_share(t, Priority::Background)
-                    < app.expected_share(t, Priority::Normal) * 0.7,
+                share(t, Priority::Background) < share(t, Priority::Normal) * 0.7,
                 "background should be clearly slower at {t} cores"
             );
+        }
+    }
+
+    /// The model has to behave on machines that are not the one it was
+    /// measured on — including the ones the tests run on.
+    #[test]
+    fn the_model_holds_on_other_machines() {
+        for max in [1usize, 2, 3, 4, 6, 8, 16, 64] {
+            let full = GuiApp::share_at(max, max, Priority::Normal);
+            let half = GuiApp::share_at((max / 2).max(1), max, Priority::Normal);
+            assert!(
+                (0.0..=1.0).contains(&full) && full > 0.0,
+                "share out of range on {max} cores: {full}"
+            );
+            assert!(
+                half <= full,
+                "half a {max}-core machine cannot beat all of it: {half} vs {full}"
+            );
+            // Whatever the machine, using all of it at background priority is
+            // the case the interface warns about.
+            assert!(GuiApp::counterproductive_at(max, max, Priority::Background));
+            assert!(!GuiApp::counterproductive_at(max, max, Priority::Normal));
         }
     }
 
