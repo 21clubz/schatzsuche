@@ -38,7 +38,16 @@ const WARN: Color32 = Color32::from_rgb(224, 175, 104);
 const GOLD: Color32 = Color32::from_rgb(232, 176, 84);
 
 /// How long the intro is shown before the dashboard takes over.
-const INTRO: Duration = Duration::from_millis(1900);
+///
+/// Long enough for the countdown below to run its course, plus a beat at zero
+/// so the bar is seen full rather than snatched away as it fills.
+const INTRO: Duration = Duration::from_millis(3450);
+
+/// Seconds the intro counts down. Nothing is being waited for — the database
+/// is loaded before this screen appears. It is a curtain, not a measurement,
+/// which is why it counts down from a whole number instead of pretending to
+/// report progress.
+const COUNTDOWN: f32 = 3.0;
 
 pub struct GuiApp {
     stats: Arc<Stats>,
@@ -242,16 +251,17 @@ impl GuiApp {
     fn logo_texture(&mut self, ctx: &egui::Context) -> TextureHandle {
         self.logo
             .get_or_insert_with(|| {
-                let px: Vec<Color32> = crate::icon_data::ICON_RGBA
-                    .chunks_exact(4)
-                    .map(|c| Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]))
-                    .collect();
-                let img = egui::ColorImage {
-                    size: [
-                        crate::icon_data::ICON_W as usize,
-                        crate::icon_data::ICON_H as usize,
-                    ],
-                    pixels: px,
+                let img = match crate::icon_data::icon() {
+                    Some(icon) => egui::ColorImage {
+                        size: [icon.width as usize, icon.height as usize],
+                        pixels: icon
+                            .rgba
+                            .chunks_exact(4)
+                            .map(|c| Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]))
+                            .collect(),
+                    },
+                    // Never expected; a blank square beats a crash on a splash.
+                    None => egui::ColorImage::new([1, 1], Color32::TRANSPARENT),
                 };
                 ctx.load_texture("mark", img, egui::TextureOptions::LINEAR)
             })
@@ -489,7 +499,9 @@ impl eframe::App for GuiApp {
         // is not an abrupt swap.
         let loading = self.loading.is_some();
 
-        if self.shot_path.is_some() && std::env::var("SC_SHOT_LOADING").is_err() {
+        if self.shot_path.is_some() && std::env::var("SC_SHOT_INTRO").is_ok() {
+            self.draw_intro(ctx);
+        } else if self.shot_path.is_some() && std::env::var("SC_SHOT_LOADING").is_err() {
             self.draw_dashboard(ctx);
         } else if loading {
             self.draw_loading(ctx);
@@ -505,6 +517,10 @@ impl eframe::App for GuiApp {
 
 impl GuiApp {
     fn draw_intro(&mut self, ctx: &egui::Context) {
+        // The dashboard repaints a few times a second, which is plenty for
+        // numbers that change that often. A bar filling over three seconds is
+        // not: at that rate it advances in visible steps.
+        ctx.request_repaint();
         let t = self.started.elapsed().as_secs_f32();
         let tex = self.logo_texture(ctx);
         let funded = thousands(self.funded_count);
@@ -547,7 +563,32 @@ impl GuiApp {
                         .color(tint(DIM, alpha(0.65)))
                         .size(13.0),
                     );
-                    ui.add_space(16.0);
+
+                    ui.add_space(20.0);
+                    let fade = alpha(0.5);
+                    let progress = (t / COUNTDOWN).clamp(0.0, 1.0);
+                    // Ceiling, so the first frame reads 3 and the last whole
+                    // second reads 1. Clamped at 1: a zero would flash for a
+                    // single frame and look like a glitch.
+                    let count = ((COUNTDOWN - t).ceil() as i32).clamp(1, COUNTDOWN as i32);
+
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(300.0, 8.0), Sense::hover());
+                    ui.painter()
+                        .rect_filled(rect, 4.0, tint(Color32::from_rgb(28, 33, 48), fade));
+                    if progress > 0.0 {
+                        let mut filled = rect;
+                        filled.set_width(rect.width() * progress);
+                        ui.painter().rect_filled(filled, 4.0, tint(PRIMARY, fade));
+                    }
+
+                    ui.add_space(10.0);
+                    ui.label(
+                        RichText::new(format!("{count}"))
+                            .color(tint(PRIMARY, fade))
+                            .font(mono(26.0))
+                            .strong(),
+                    );
+                    ui.add_space(14.0);
                     // Faded in with everything else, but clickable throughout.
                     if alpha(0.95) > 0.9 {
                         handle_link(ui, 14.0);
@@ -1175,15 +1216,26 @@ impl GuiApp {
                 };
                 let presets = [
                     (
+                        "Unauffällig",
+                        1usize,
+                        Priority::Background,
+                        1u8,
+                        "Ein Kern, ein Prozent der Zeit — kein Lüfter, kein Akku, \
+                         läuft monatelang nebenher"
+                            .to_string(),
+                    ),
+                    (
                         "Sparsam",
                         machine.economical_threads(),
                         Priority::Background,
+                        100u8,
                         quiet_hint,
                     ),
                     (
                         "Ausgewogen",
                         machine.recommended_threads(),
                         Priority::Normal,
+                        100u8,
                         if machine.efficiency > 0 {
                             "Empfohlen — die schnellen Kerne, volles Tempo darauf".to_string()
                         } else {
@@ -1194,18 +1246,29 @@ impl GuiApp {
                         "Maximum",
                         max_cores,
                         Priority::Normal,
+                        100u8,
                         format!("Alle Kerne, {NOUN} wird warm und lauter"),
                     ),
                 ];
-                for (name, t, prio, hint) in presets {
+                for (name, t, prio, duty, hint) in presets {
                     let t = t.min(max_cores);
-                    let active = threads == t && self.control.priority() == prio;
+                    let active = threads == t
+                        && self.control.priority() == prio
+                        && self.control.throttle() == duty;
+                    // A duty cycle multiplies straight into the estimate, and
+                    // at one percent the usual rounding would print "0 %".
+                    let share = self.expected_share(t, prio) * duty as f64 / 100.0;
+                    let tempo = if share * 100.0 < 1.0 {
+                        format!("{:.2} % Tempo", share * 100.0).replace('.', ",")
+                    } else {
+                        format!("{:.0} % Tempo", share * 100.0)
+                    };
                     if ui
                         .add(
                             egui::Button::new(
                                 RichText::new(format!(
-                                    "{name}   ·   {t} Kerne   ·   ca. {:.0} % Tempo",
-                                    self.expected_share(t, prio) * 100.0
+                                    "{name}   ·   {t} {}   ·   ca. {tempo}",
+                                    if t == 1 { "Kern" } else { "Kerne" }
                                 ))
                                 .color(if active { Color32::BLACK } else { TEXT })
                                 .size(12.5)
@@ -1220,6 +1283,7 @@ impl GuiApp {
                     {
                         self.control.set_active_threads(t);
                         self.control.set_priority(prio);
+                        self.control.set_throttle(duty);
                     }
                     ui.label(RichText::new(hint).color(MUTED).size(11.0));
                     ui.add_space(8.0);
@@ -1734,26 +1798,23 @@ mod tests {
         assert_eq!(thousands(1_234_567), "1 234 567");
     }
 
-    /// The embedded icon must be a sane, non-empty image.
+    /// The embedded icon must be a sane, non-empty image. Size and shape are
+    /// checked where it is decoded; this is about the picture itself.
     #[test]
     fn icon_data_is_well_formed() {
-        use crate::icon_data;
-        assert_eq!(
-            icon_data::ICON_RGBA.len(),
-            (icon_data::ICON_W * icon_data::ICON_H * 4) as usize
-        );
+        let icon = crate::icon_data::icon().expect("embedded icon does not decode");
+        let total = (icon.width * icon.height) as usize;
+
         // Opaque enough to be a real icon rather than a blank sheet.
-        let opaque = icon_data::ICON_RGBA
-            .chunks_exact(4)
-            .filter(|c| c[3] > 200)
-            .count();
-        let total = (icon_data::ICON_W * icon_data::ICON_H) as usize;
+        let opaque = icon.rgba.chunks_exact(4).filter(|c| c[3] > 200).count();
         assert!(
             opaque > total / 2,
             "icon is mostly transparent: {opaque}/{total}"
         );
+
         // And not a single flat colour.
-        let distinct: std::collections::HashSet<[u8; 3]> = icon_data::ICON_RGBA
+        let distinct: std::collections::HashSet<[u8; 3]> = icon
+            .rgba
             .chunks_exact(4)
             .map(|c| [c[0], c[1], c[2]])
             .collect();

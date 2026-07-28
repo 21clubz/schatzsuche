@@ -40,6 +40,8 @@ eframe = { version = "0.29", default-features = false, features = [
 egui = "0.29"
 bip39 = "2"
 num_cpus = "1"
+# Only to decode the embedded icon at startup. Pure Rust, no C dependency.
+png = "0.17"
 
 # Unix-only: hostname, thread priority and the full-fsync barrier.
 [target.'cfg(unix)'.dependencies]

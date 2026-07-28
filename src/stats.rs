@@ -128,6 +128,14 @@ pub struct Control {
     /// a human would say rather than an enum discriminant, so a bad value can
     /// only ever fall back to 24 instead of meaning something else.
     word_count: AtomicU8Wrapper,
+    /// Share of the time a worker is allowed to spend working, in percent.
+    ///
+    /// 100 is flat out. Below that the worker measures how long a candidate
+    /// took and sleeps for the matching remainder, so the duty cycle holds on
+    /// a fast machine and a slow one alike. Priority alone cannot go this low:
+    /// the lowest scheduling tier still runs continuously, it just runs on the
+    /// quiet cores.
+    throttle: AtomicU8Wrapper,
     /// Guards the state transitions so a pause cannot be missed between the
     /// flag check and the wait.
     lock: Mutex<()>,
@@ -152,6 +160,7 @@ impl Control {
             addresses_per_path: AtomicU32::new(addresses_per_path.max(1)),
             priority: AtomicU8Wrapper::new(priority as u8),
             word_count: AtomicU8Wrapper::new(WordCount::W24.words() as u8),
+            throttle: AtomicU8Wrapper::new(100),
             lock: Mutex::new(()),
             wake: Condvar::new(),
         }
@@ -196,6 +205,32 @@ impl Control {
 
     pub fn set_word_count(&self, wc: WordCount) {
         self.word_count.store(wc.words() as u8, Ordering::Relaxed);
+    }
+
+    /// Percent of the time a worker may spend working. Always 1..=100.
+    #[inline]
+    pub fn throttle(&self) -> u8 {
+        self.throttle.load(Ordering::Relaxed).clamp(1, 100)
+    }
+
+    pub fn set_throttle(&self, percent: u8) {
+        self.throttle
+            .store(percent.clamp(1, 100), Ordering::Relaxed);
+    }
+
+    /// How long to rest after working for `busy`, to hold the duty cycle.
+    ///
+    /// Derived from measured work rather than a fixed sleep, so the same
+    /// setting means the same share of a core whatever the machine. Capped:
+    /// a very large `addresses_per_path` would otherwise buy minute-long naps,
+    /// and a worker that never wakes cannot notice a stop.
+    pub fn rest_after(&self, busy: std::time::Duration) -> std::time::Duration {
+        let t = self.throttle();
+        if t >= 100 {
+            return std::time::Duration::ZERO;
+        }
+        let factor = (100.0 - t as f64) / t as f64;
+        busy.mul_f64(factor).min(std::time::Duration::from_secs(2))
     }
 
     /// True when the worker with this index should be doing work.
@@ -394,6 +429,39 @@ mod tests {
         assert_eq!(s.addresses(), 600);
     }
 
+    /// The duty cycle is the whole point of the unobtrusive mode: rest time is
+    /// derived from measured work, so one percent means one percent on a fast
+    /// machine and a slow one alike.
+    #[test]
+    fn throttling_rests_in_proportion_to_the_work() {
+        use std::time::Duration;
+        let c = Control::new(1, 20, Priority::Background);
+
+        assert_eq!(c.rest_after(Duration::from_millis(5)), Duration::ZERO);
+
+        c.set_throttle(50);
+        assert_eq!(
+            c.rest_after(Duration::from_millis(10)),
+            Duration::from_millis(10),
+            "half duty means resting as long as working"
+        );
+
+        c.set_throttle(1);
+        let rest = c.rest_after(Duration::from_micros(700));
+        assert!(
+            rest >= Duration::from_millis(68) && rest <= Duration::from_millis(70),
+            "one percent of a 700µs candidate should rest ~69ms, rested {rest:?}"
+        );
+
+        // A very large addresses-per-path setting must not buy minute-long
+        // naps: a worker that never wakes cannot notice a stop.
+        assert_eq!(
+            c.rest_after(Duration::from_secs(10)),
+            Duration::from_secs(2),
+            "rest is capped"
+        );
+    }
+
     #[test]
     fn rate_tracks_instantaneous_throughput() {
         let mut r = Rate::new(8);
@@ -500,6 +568,12 @@ mod tests {
 
         c.set_active_threads(0);
         assert_eq!(c.active_threads(), 1, "at least one worker must run");
+
+        assert_eq!(c.throttle(), 100, "unthrottled by default");
+        c.set_throttle(0);
+        assert_eq!(c.throttle(), 1, "zero would stop the search entirely");
+        c.set_throttle(200);
+        assert_eq!(c.throttle(), 100, "clamped to flat out");
 
         assert_eq!(c.priority(), Priority::Utility);
         c.set_priority(Priority::Background);

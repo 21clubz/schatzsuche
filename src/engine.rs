@@ -119,6 +119,7 @@ fn worker(shared: &Shared, index: usize) {
     let mut since_flush = 0u64;
 
     loop {
+        let began = std::time::Instant::now();
         let wc = shared.control.word_count();
         let n_bytes = wc.entropy_bytes();
         entropy_src.fill(&mut entropy[..n_bytes]);
@@ -161,7 +162,27 @@ fn worker(shared: &Shared, index: usize) {
             }
         }
 
-        if since_flush >= FLUSH_EVERY {
+        // Throttling: rest for as long as this candidate took, scaled to the
+        // duty cycle. Sliced, so a stop is noticed within a tick rather than
+        // after a full nap.
+        let rest = shared.control.rest_after(began.elapsed());
+        let throttled = !rest.is_zero();
+        if throttled {
+            let mut left = rest;
+            let slice = std::time::Duration::from_millis(40);
+            while !left.is_zero() && !shared.control.stopping() {
+                let step = left.min(slice);
+                std::thread::sleep(step);
+                left -= step;
+            }
+        }
+
+        // Throttled runs take the checks every candidate rather than every few
+        // thousand: at a one-percent duty cycle the periodic path would come
+        // round about once a minute, so the pause button, the core slider and
+        // the counters would all appear dead. Against a nap measured in tens of
+        // milliseconds, checking a handful of atomics costs nothing.
+        if throttled || since_flush >= FLUSH_EVERY {
             local.flush(&shared.stats);
             since_flush = 0;
 

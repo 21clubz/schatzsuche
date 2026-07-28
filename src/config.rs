@@ -38,6 +38,13 @@ pub struct Run {
     /// Background keeps the machine cool and responsive by preferring the
     /// efficiency cores, at the cost of throughput.
     pub priority: u8,
+    /// Share of the time a worker actually works, in percent, 1 to 100.
+    ///
+    /// The lowest scheduling priority still runs continuously; it only moves
+    /// the work to the quiet cores. To disappear entirely — no fan, no
+    /// measurable battery cost, nothing in the energy tab — the work has to
+    /// stop between candidates, which is what this does.
+    pub throttle_percent: u8,
 }
 
 impl Default for Run {
@@ -50,6 +57,7 @@ impl Default for Run {
             // core laptop. Zero means the hardware decides at startup.
             threads: 0,
             priority: 2,
+            throttle_percent: 100,
         }
     }
 }
@@ -283,6 +291,12 @@ impl Config {
 # while running. A shorter mnemonic searches a smaller space, not a more
 # promising one — a hit needs a collision in the 160-bit address space either
 # way.
+#
+# run.throttle_percent is the share of the time a worker actually works, 1 to
+# 100. At 1 it rests fifty times longer than it computes: no fan, no
+# measurable battery cost, nothing visible in the energy tab. The search then
+# runs at a hundredth of its speed, which against the numbers this program
+# exists to display is not a meaningful difference.
 
 ";
         write_owner_only(path, &format!("{header}{text}"))
@@ -357,6 +371,12 @@ impl Config {
                     suggest_topic()
                 ));
             }
+        }
+        if !(1..=100).contains(&self.run.throttle_percent) {
+            return Err(format!(
+                "throttle_percent muss zwischen 1 und 100 liegen, steht aber auf {}",
+                self.run.throttle_percent
+            ));
         }
         if WordCount::from_words(self.run.word_count).is_none() {
             return Err(format!(

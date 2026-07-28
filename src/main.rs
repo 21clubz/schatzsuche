@@ -86,6 +86,10 @@ struct Cli {
     #[arg(long, value_name = "N")]
     words: Option<u8>,
 
+    /// Share of the time a worker works, 1-100. 1 is the unnoticeable mode.
+    #[arg(long, value_name = "PERCENT")]
+    throttle: Option<u8>,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -301,6 +305,12 @@ fn load_config(cli: &Cli) -> Result<Config, String> {
             return Err(format!("--words must be 12, 15, 18, 21 or 24, got {w}"));
         }
         cfg.run.word_count = w;
+    }
+    if let Some(p) = cli.throttle {
+        if !(1..=100).contains(&p) {
+            return Err(format!("--throttle must be between 1 and 100, got {p}"));
+        }
+        cfg.run.throttle_percent = p;
     }
     cfg.validate()?;
     if let Some(h) = &cli.heartbeat {
@@ -637,6 +647,7 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
         Priority::from_u8(cfg.run.priority),
     ));
     control.set_word_count(wc);
+    control.set_throttle(cfg.run.throttle_percent);
     if cli.start_paused {
         control.set_paused(true);
     }
@@ -715,16 +726,19 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
             cli.screenshot.clone(),
             Some(Arc::clone(&progress)),
         );
+        let mut viewport = eframe::egui::ViewportBuilder::default()
+            .with_inner_size([1180.0, 800.0])
+            .with_min_inner_size([900.0, 640.0])
+            .with_title("Schatzsuche");
+        if let Some(icon) = schatzsuche::icon_data::icon() {
+            viewport = viewport.with_icon(eframe::egui::IconData {
+                rgba: icon.rgba,
+                width: icon.width,
+                height: icon.height,
+            });
+        }
         let opts = eframe::NativeOptions {
-            viewport: eframe::egui::ViewportBuilder::default()
-                .with_inner_size([1180.0, 800.0])
-                .with_min_inner_size([900.0, 640.0])
-                .with_title("Schatzsuche")
-                .with_icon(eframe::egui::IconData {
-                    rgba: schatzsuche::icon_data::ICON_RGBA.to_vec(),
-                    width: schatzsuche::icon_data::ICON_W,
-                    height: schatzsuche::icon_data::ICON_H,
-                }),
+            viewport,
             ..Default::default()
         };
         eframe::run_native("Schatzsuche", opts, Box::new(|_| Ok(Box::new(app))))
@@ -748,9 +762,14 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
             }
         );
         println!(
-            "  Arbeiter   : {threads} aktiv von {} Kernen, Priorität {}",
+            "  Arbeiter   : {threads} aktiv von {} Kernen, Priorität {}{}",
             machine.max_threads(),
-            Priority::from_u8(cfg.run.priority).label()
+            Priority::from_u8(cfg.run.priority).label(),
+            if cfg.run.throttle_percent < 100 {
+                format!(", gedrosselt auf {} %", cfg.run.throttle_percent)
+            } else {
+                String::new()
+            }
         );
         println!(
             "  Ableitung  : {} Adressen/Pfad x 3 = {} pro Seed",

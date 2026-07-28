@@ -174,6 +174,29 @@ weggenommen hat, sich nicht mehr wie der eigene anfühlt. Wer es anders will,
 stellt `threads` in der `config.toml` fest ein oder schiebt den Regler im
 Fenster — auch das im laufenden Betrieb.
 
+### Unauffällig — für alle, die es trotzdem laufen lassen wollen
+
+Die Zahlen oben sagen, dass es nichts findet. Wer es trotzdem im Hintergrund
+mitlaufen lassen will, soll das tun können, ohne es zu merken. Dafür gibt es
+die Voreinstellung **„Unauffällig"**: ein Kern, niedrigste Priorität, und
+**ein Prozent Einschaltdauer**.
+
+Die niedrigste Priorität allein reicht dafür nicht — sie schiebt die Arbeit nur
+auf die sparsamen Kerne, laufen tut sie weiter. Deshalb misst der Arbeiter, wie
+lange ein Kandidat gedauert hat, und legt sich anschließend für das
+Neunundneunzigfache davon schlafen. Das hält den Anteil auf jeder Maschine
+gleich, egal wie schnell sie ist.
+
+Gemessen auf einem M1: **unter 1 % eines Kerns**, im Mittel etwa ein halbes
+Prozent — auf einem Achtkerner also rund ein Zehntel Prozent der Maschine. Kein
+Lüfter, kein spürbarer Akkuverbrauch, nichts, was in der Energieübersicht
+auffällt.
+
+Der Preis ist ein Hundertstel der Geschwindigkeit. Gegen 10¹⁹ Universumsalter
+ist das kein Unterschied, der eine Rolle spielt.
+
+Dauerhaft über `throttle_percent` in der `config.toml` oder `--throttle 1`.
+
 Kernanzahl, Priorität und Adressen pro Wallet lassen sich **im laufenden
 Betrieb** ändern. Statt den Thread-Pool neu zu bauen, parkt sich ein Worker
 oberhalb der eingestellten Kernzahl selbst — über dieselbe Bremse, die auch die
@@ -315,7 +338,7 @@ Gemessen gegen 5 Mio. Einträge: 2 Fehlalarme auf 2,39 Mio. Abfragen (8,4e-7) be
 cargo test --release
 ```
 
-102 Tests. Die tragenden:
+104 Tests. Die tragenden:
 
 * BIP-39/32/44/49/84-Ableitung gegen die Referenzbibliotheken `bitcoin` und
   `bip39` über zufällige Seeds, plus die veröffentlichten Testvektoren.
