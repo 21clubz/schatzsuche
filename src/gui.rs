@@ -605,6 +605,7 @@ impl eframe::App for GuiApp {
 
         self.drain();
 
+        self.rate.note_paused(self.control.paused());
         if self.last_sample.elapsed() >= Duration::from_millis(250) && !self.control.paused() {
             let inst = self.rate.sample(self.stats.seeds());
             if inst > self.peak {

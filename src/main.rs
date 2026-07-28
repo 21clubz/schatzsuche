@@ -126,6 +126,25 @@ enum Command {
     InitConfig,
     /// Prove the Bloom filter and on-disk lookup actually find a planted seed.
     VerifyLookup,
+    /// Recover YOUR OWN seed when a word is missing, wrong, or swapped.
+    Recover {
+        /// The words you have, with `?` for each one you are missing.
+        #[arg(long)]
+        words: String,
+        /// An address the wallet is known to own — the search target.
+        #[arg(long)]
+        address: String,
+        /// missing | typo | swap. What went wrong with the seed.
+        #[arg(long, default_value = "missing")]
+        mode: String,
+        /// Addresses to derive per path before moving on. Raise it if the
+        /// wallet used addresses past the first.
+        #[arg(long, default_value_t = 20)]
+        depth: u32,
+        /// Skip the confirmation. You still have to have read the warning.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 /// Standard per-user location for the database, config and hit files.
@@ -273,6 +292,13 @@ fn dispatch(cli: Cli) -> Result<(), String> {
             plant,
         }) => synth_db(*count, output, plant.as_deref()),
         Some(Command::VerifyLookup) => verify_lookup(),
+        Some(Command::Recover {
+            words,
+            address,
+            mode,
+            depth,
+            yes,
+        }) => run_recover(words, address, mode, *depth, *yes),
         None => {
             let cfg = load_config(&cli)?;
             if cli.test_persistence {
@@ -469,6 +495,141 @@ fn test_alert(cfg: &Config) -> Result<(), String> {
 }
 
 /// Proves the two-stage lookup actually finds a known planted address.
+/// Recovery of the user's own seed. Prints a warning, an estimate, and asks
+/// for a typed confirmation before it touches the wallet.
+fn run_recover(
+    words: &str,
+    address: &str,
+    mode: &str,
+    depth: u32,
+    yes: bool,
+) -> Result<(), String> {
+    use schatzsuche::recover::{describe_space, Mode, Plan};
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::Arc;
+
+    let mode = match mode {
+        "missing" => Mode::Missing,
+        "typo" => Mode::Typo,
+        "swap" => Mode::Swap,
+        other => {
+            return Err(format!(
+                "--mode ist missing, typo oder swap, nicht „{other}“"
+            ))
+        }
+    };
+
+    let plan = Plan::new(words, address, mode, depth)?;
+
+    // A rough per-candidate cost: the checksum-fail path is a SHA-256, the
+    // pass path adds PBKDF2 and derivation. Measured on an M1; an over-estimate
+    // elsewhere, which is the safe direction for a promise about time.
+    let secs = plan.estimate_secs(0.09e-6, 2.5e-3);
+
+    println!();
+    println!("  WIEDERHERSTELLUNG DER EIGENEN SEED");
+    println!("  ----------------------------------");
+    println!("  {}", describe_space(&plan));
+    println!("  Geschätzte Dauer: {}", human_duration(secs));
+    println!();
+    println!("  Bitte lies das, bevor du fortfährst:");
+    println!();
+    println!("  • Dieser Rechner muss mit dem Internet verbunden sein, um den");
+    println!("    Kontostand der Zieladresse zu prüfen und die Seed später zu");
+    println!("    benutzen. Ein Rechner am Netz kann kompromittiert sein — wer");
+    println!("    ganz sichergehen will, macht das an einem Gerät ohne Netz.");
+    println!("  • Das Programm schickt deine Wörter NIRGENDWOHIN. Sie werden nur");
+    println!("    lokal ausprobiert; ein Treffer landet nur auf dieser Platte.");
+    println!("    Das ist im Quelltext nachprüfbar (src/recover.rs).");
+    println!("  • Gib eine Seed niemals auf einer Webseite ein, die anbietet, sie");
+    println!("    „wiederherzustellen“. Das ist der häufigste Weg, sie zu verlieren.");
+    println!();
+
+    if !yes {
+        print!("  Ich habe das gelesen und weiß, was ich tue. Fortfahren? [ja/nein] ");
+        std::io::stdout().flush().ok();
+        let mut answer = String::new();
+        std::io::stdin()
+            .read_line(&mut answer)
+            .map_err(|e| e.to_string())?;
+        let answer = answer.trim().to_ascii_lowercase();
+        if answer != "ja" && answer != "j" && answer != "yes" && answer != "y" {
+            println!("  Abgebrochen.");
+            return Ok(());
+        }
+    }
+
+    println!();
+    println!("  Suche läuft … (Strg-C bricht ab)");
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    let counter = Arc::new(AtomicU64::new(0));
+    let total = plan.candidate_count();
+
+    // A ticker on another thread, so the user sees the search is alive.
+    let ticker = {
+        let counter = Arc::clone(&counter);
+        let cancel = Arc::clone(&cancel);
+        thread::spawn(move || {
+            while !cancel.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(500));
+                let done = counter.load(Ordering::Relaxed);
+                if total > 0 {
+                    print!(
+                        "\r  {} von {} geprüft ({:.1} %)   ",
+                        util::group_digits(done),
+                        util::group_digits(total),
+                        done as f64 / total as f64 * 100.0
+                    );
+                    std::io::stdout().flush().ok();
+                }
+            }
+        })
+    };
+
+    let found = plan.run(&cancel, &counter);
+    cancel.store(true, Ordering::Relaxed);
+    ticker.join().ok();
+    println!();
+
+    match found {
+        Some(f) => {
+            println!();
+            println!("  ✓ GEFUNDEN");
+            println!("  Adresse : {}", f.address);
+            println!("  Pfad    : {}", f.path);
+            println!("  Wörter  : {}", f.mnemonic);
+            println!();
+            println!("  Schreib die Wörter jetzt auf Papier. Schließ das Terminal, wenn");
+            println!("  du fertig bist — sie stehen oben im Klartext.");
+            Ok(())
+        }
+        None => {
+            println!();
+            println!("  Nichts gefunden. Die Seed lässt sich mit dieser Angabe nicht");
+            println!("  rekonstruieren. Prüfe die Zieladresse und die Wörter, oder");
+            println!("  probier einen anderen Modus (--mode typo, --mode swap).");
+            Ok(())
+        }
+    }
+}
+
+/// A duration in words, from seconds. Rough on purpose.
+fn human_duration(secs: f64) -> String {
+    if secs < 1.0 {
+        "unter einer Sekunde".into()
+    } else if secs < 90.0 {
+        format!("etwa {} Sekunden", secs.round() as u64)
+    } else if secs < 5400.0 {
+        format!("etwa {} Minuten", (secs / 60.0).round() as u64)
+    } else if secs < 172_800.0 {
+        format!("etwa {} Stunden", (secs / 3600.0).round() as u64)
+    } else {
+        format!("etwa {} Tage", (secs / 86_400.0).round() as u64)
+    }
+}
+
 fn verify_lookup() -> Result<(), String> {
     let dir = std::env::temp_dir().join("schatzsuche-verify");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;

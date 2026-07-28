@@ -245,6 +245,43 @@ Windows nicht; das Paket bricht den Build ab, statt zurückzufallen. Dort läuft
 PBKDF2 mit der portablen Implementierung. Gemessener Unterschied auf einem M1:
 1400 gegen 1020 Seeds/s bei sonst gleichen Bedingungen.
 
+## Die eigene Seed wiederherstellen
+
+Der ehrliche Gegenpol zum Collider. Die Hauptsuche findet nichts, weil sie im
+gesamten Schlüsselraum sucht. Wenn du aber deine **eigene** Wallet
+wiederherstellst — du hast die meisten Wörter, dir fehlt nur ein Teil —, ist
+der Raum klein genug, dass ein Treffer nicht nur möglich, sondern wahrscheinlich
+ist.
+
+Drei Fälle:
+
+| Was passiert ist | `--mode` | Beispiel-Suchraum |
+| --- | --- | --- |
+| Ein Wort fehlt (mit `?` markiert) | `missing` | 2048 je Lücke |
+| Ein Wort ist vertippt, Position unbekannt | `typo` | 24 × 2048 ≈ 49 000 |
+| Zwei benachbarte Wörter vertauscht | `swap` | ein paar Dutzend |
+
+```bash
+schatzsuche recover \
+  --words "zoo abandon ? ... about" \
+  --address bc1q... \
+  --mode missing
+```
+
+Das Programm rechnet zuerst den Suchraum und die geschätzte Dauer aus, zeigt
+eine **Warnung** und fragt nach einer ausdrücklichen Bestätigung, bevor es
+loslegt.
+
+Ein bewusst *nicht* angebotener Fall ist die freie Umsortierung aller Wörter:
+24 Wörter lassen sich 6·10²³-fach anordnen — das ist wieder Collider-Gebiet,
+und so zu tun, als ginge das, wäre genau die Unehrlichkeit, gegen die dieses
+Programm argumentiert.
+
+**Sicherheit:** Für das Prüfen des Kontostands und das spätere Benutzen der
+Seed muss der Rechner am Netz sein — ein Risiko, das die Warnung ausspricht.
+Die Wörter selbst verlassen den Rechner nie; sie werden nur lokal
+durchprobiert, nachprüfbar in `src/recover.rs`.
+
 ## Wohin ein Treffer geht
 
 Die Reihenfolge ist ein Haltbarkeitsversprechen, kein Stilmittel:
@@ -338,7 +375,7 @@ Gemessen gegen 5 Mio. Einträge: 2 Fehlalarme auf 2,39 Mio. Abfragen (8,4e-7) be
 cargo test --release
 ```
 
-104 Tests. Die tragenden:
+112 Tests. Die tragenden:
 
 * BIP-39/32/44/49/84-Ableitung gegen die Referenzbibliotheken `bitcoin` und
   `bip39` über zufällige Seeds, plus die veröffentlichten Testvektoren.

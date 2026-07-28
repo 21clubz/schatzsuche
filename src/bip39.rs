@@ -82,7 +82,7 @@ impl WordCount {
     }
 
     /// Checksum bits appended to the entropy before splitting into 11-bit groups.
-    const fn checksum_bits(self) -> u32 {
+    pub const fn checksum_bits(self) -> u32 {
         (self.entropy_bytes() as u32 * 8) / 32
     }
 }
@@ -123,6 +123,71 @@ pub fn entropy_to_mnemonic(entropy: &[u8], wc: WordCount, out: &mut String) {
         }
         out.push_str(wordlist[idx]);
     }
+}
+
+/// The English BIP-39 word list, 2048 entries indexed 0..2047.
+pub fn wordlist() -> &'static [&'static str] {
+    bip39::Language::English.word_list()
+}
+
+/// The list index of a word, or `None` if it is not on the list.
+///
+/// BIP-39 words are unique in their first four letters, so a four-letter
+/// prefix is accepted too: someone recovering a seed from handwriting often
+/// has the stub of a word rather than the whole of it.
+pub fn word_index(word: &str) -> Option<u16> {
+    let word = word.trim().to_ascii_lowercase();
+    let list = wordlist();
+    if let Some(i) = list.iter().position(|w| *w == word) {
+        return Some(i as u16);
+    }
+    if word.len() >= 4 {
+        let stub = &word[..4];
+        if let Some(i) = list.iter().position(|w| w.starts_with(stub)) {
+            return Some(i as u16);
+        }
+    }
+    None
+}
+
+/// Turns word indices back into entropy, but only if the BIP-39 checksum
+/// holds. `None` means this exact sequence of words is not a valid mnemonic.
+///
+/// This is the filter the recovery search leans on: most candidates fail here,
+/// at the cost of one SHA-256, and never reach the expensive derivation.
+pub fn indices_to_entropy(indices: &[u16], wc: WordCount) -> Option<Vec<u8>> {
+    if indices.len() != wc.words() {
+        return None;
+    }
+    let n_entropy = wc.entropy_bytes();
+    let total_bits = wc.words() * 11;
+    let mut bits = vec![0u8; total_bits];
+    for (w, &idx) in indices.iter().enumerate() {
+        if idx >= 2048 {
+            return None;
+        }
+        for b in 0..11 {
+            bits[w * 11 + b] = ((idx >> (10 - b)) & 1) as u8;
+        }
+    }
+
+    let mut entropy = vec![0u8; n_entropy];
+    for (i, chunk) in bits[..n_entropy * 8].chunks(8).enumerate() {
+        let mut byte = 0u8;
+        for &bit in chunk {
+            byte = (byte << 1) | bit;
+        }
+        entropy[i] = byte;
+    }
+
+    let checksum = Sha256::digest(&entropy)[0];
+    for b in 0..wc.checksum_bits() as usize {
+        let expected = (checksum >> (7 - b)) & 1;
+        if bits[n_entropy * 8 + b] != expected {
+            return None;
+        }
+    }
+    Some(entropy)
 }
 
 /// A primed HMAC-SHA512 key schedule plus scratch space for PBKDF2.

@@ -341,6 +341,10 @@ impl Local {
 /// Rolling throughput derived by sampling [`Stats`] from the UI thread.
 pub struct Rate {
     start: Instant,
+    /// When the current pause began, if the search is paused.
+    paused_since: Option<Instant>,
+    /// Time already spent paused, before the current pause.
+    paused_total: std::time::Duration,
     last_at: Instant,
     last_seeds: u64,
     /// Exponentially weighted average, in seeds/sec.
@@ -355,6 +359,8 @@ impl Rate {
         let now = Instant::now();
         Rate {
             start: now,
+            paused_since: None,
+            paused_total: std::time::Duration::ZERO,
             last_at: now,
             last_seeds: 0,
             ewma: 0.0,
@@ -395,7 +401,7 @@ impl Rate {
     /// Mean rate over the whole run, which is what "gleitender Durchschnitt"
     /// should be compared against.
     pub fn lifetime(&self, seeds: u64) -> f64 {
-        let e = self.start.elapsed().as_secs_f64();
+        let e = self.elapsed().as_secs_f64();
         if e > 0.0 {
             seeds as f64 / e
         } else {
@@ -403,8 +409,29 @@ impl Rate {
         }
     }
 
+    /// Tracks the pause state. Called every frame; only transitions matter.
+    pub fn note_paused(&mut self, paused: bool) {
+        match (paused, self.paused_since) {
+            (true, None) => self.paused_since = Some(Instant::now()),
+            (false, Some(at)) => {
+                self.paused_total += at.elapsed();
+                self.paused_since = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Time the search has actually been running.
+    ///
+    /// Wall clock minus every pause. It used to be the raw clock, so a run
+    /// left paused overnight claimed to have searched all night — and the
+    /// lifetime average, which divides by this, was wrong by the same factor.
     pub fn elapsed(&self) -> std::time::Duration {
-        self.start.elapsed()
+        let raw = self.start.elapsed().saturating_sub(self.paused_total);
+        match self.paused_since {
+            Some(at) => raw.saturating_sub(at.elapsed()),
+            None => raw,
+        }
     }
 
     pub fn history(&self) -> &[u64] {
@@ -459,6 +486,35 @@ mod tests {
             c.rest_after(Duration::from_secs(10)),
             Duration::from_secs(2),
             "rest is capped"
+        );
+    }
+
+    /// A paused search is not running, and the clock has to say so. It used to
+    /// keep counting, so a run left paused overnight claimed the whole night
+    /// as search time — and the lifetime average divides by exactly this.
+    #[test]
+    fn the_clock_stops_while_paused() {
+        use std::time::Duration;
+        let mut r = Rate::new(8);
+        std::thread::sleep(Duration::from_millis(40));
+
+        r.note_paused(true);
+        let at_pause = r.elapsed();
+        std::thread::sleep(Duration::from_millis(60));
+        let during = r.elapsed();
+        assert!(
+            during.saturating_sub(at_pause) < Duration::from_millis(15),
+            "clock advanced by {:?} while paused",
+            during.saturating_sub(at_pause)
+        );
+
+        r.note_paused(false);
+        std::thread::sleep(Duration::from_millis(40));
+        let after = r.elapsed();
+        assert!(after > during, "clock did not restart");
+        assert!(
+            after < Duration::from_millis(120),
+            "the pause was counted after all: {after:?}"
         );
     }
 

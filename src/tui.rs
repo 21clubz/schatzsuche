@@ -458,7 +458,9 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
 
         if last_draw.elapsed() >= interval {
             app.drain_events();
-            if !app.paused() {
+            let paused = app.paused();
+            app.rate.note_paused(paused);
+            if !paused {
                 let inst = app.rate.sample(app.stats.seeds());
                 if inst > app.peak {
                     app.peak = inst;
