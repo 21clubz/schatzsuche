@@ -1,6 +1,6 @@
 //! Command-line entry point.
 
-use std::io::{BufReader, IsTerminal, Write};
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
 use std::sync::Arc;
@@ -178,13 +178,35 @@ fn enter_data_dir(explicit: Option<&Path>) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// True when nothing is attached to standard output.
+/// True when this process was started as a macOS application bundle.
 ///
-/// A desktop launch carries no arguments, so this is how the program knows it
-/// was double-clicked rather than run from a shell — and therefore that a
-/// window, not terminal output, is the only way to say anything at all.
-fn launched_without_terminal() -> bool {
-    !std::io::stdout().is_terminal()
+/// A desktop launch carries no arguments, so something has to distinguish it
+/// from a shell invocation. An earlier version asked whether stdout was a
+/// terminal, which is wrong twice over: `schatzsuche > log.txt` from a shell
+/// also has a non-terminal stdout, and on a CI runner *nothing* is a terminal —
+/// so a failing check would have tried to open a window on a machine with no
+/// display.
+///
+/// The bundle path is an exact signal instead of a guess. Elsewhere a
+/// double-clicked binary gets a console and the terminal interface, which is
+/// the platform convention; `--gui` is always available.
+fn launched_from_app_bundle() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .map(|d| d.ends_with("Contents/MacOS"))
+        .unwrap_or(false)
+}
+
+/// Whether a graphical session exists to draw into.
+///
+/// Guards the error window: on a headless machine it would hang or abort, and
+/// a message on stderr is far better than either.
+fn has_display() -> bool {
+    if cfg!(target_os = "macos") || cfg!(target_os = "windows") {
+        return true;
+    }
+    std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some()
 }
 
 fn main() {
@@ -199,7 +221,7 @@ fn main() {
     if !cli.headless
         && cli.screenshot.is_none()
         && cli.command.is_none()
-        && launched_without_terminal()
+        && launched_from_app_bundle()
     {
         cli.gui = true;
     }
@@ -211,10 +233,10 @@ fn main() {
         // Without a terminal there is nowhere for this to go, and a
         // double-clicked app that does nothing at all is the worst possible
         // failure mode. So in window mode, the error gets a window.
-        if gui {
+        if gui && has_display() {
             schatzsuche::gui::show_error(&e);
         } else {
-            eprintln!("error: {e}");
+            eprintln!("Fehler: {e}");
         }
         std::process::exit(1);
     }

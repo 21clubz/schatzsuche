@@ -68,8 +68,9 @@ Dump läuft. Mit einem echten Dump funktionierter Adressen stattdessen:
 schatzsuche build-db --input dump.tsv
 ```
 
-Ohne Argumente startet das Programm im Terminal; per Doppelklick oder mit
-`--gui` öffnet es ein Fenster.
+Ohne Argumente startet das Programm im Terminal. Unter macOS öffnet der
+Doppelklick auf das App-Bundle ein Fenster; auf allen Systemen erzwingt `--gui`
+das Fenster.
 
 ## Bedienung
 
