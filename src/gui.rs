@@ -1315,7 +1315,7 @@ impl GuiApp {
                     // more cores, more heat — was telling the reader what the rows
                     // below already show.
                     ui.label(RichText::new(machine.describe()).color(DIM).size(11.5));
-                    ui.add_space(10.0);
+                    ui.add_space(8.0);
 
                     // Each row says what it costs in its own words: how much of
                     // the machine, and what that feels like. The meter carries the
@@ -1386,6 +1386,35 @@ impl GuiApp {
                              Akku hältst du es nicht lange durch.",
                         ),
                     ];
+
+                    // Which one is running right now. Settings that came from
+                    // config.toml or the expert sliders need not match any of
+                    // these — priority "Normal" is in none of them — and four
+                    // unlit rows told the reader nothing at all about that.
+                    let active_idx = presets.iter().position(|(_, t, prio, duty, ..)| {
+                        threads == (*t).min(max_cores)
+                            && self.control.priority() == *prio
+                            && self.control.throttle() == *duty
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Aktiv:").color(MUTED).size(11.5));
+                        match active_idx {
+                            Some(i) => ui.label(
+                                RichText::new(presets[i].0).color(PRIMARY).size(11.5).strong(),
+                            ),
+                            None => ui.label(
+                                RichText::new(format!(
+                                    "Eigene Einstellung · {} · Priorität {}",
+                                    cores(threads),
+                                    self.control.priority().label()
+                                ))
+                                .color(WARN)
+                                .size(11.5)
+                                .strong(),
+                            ),
+                        };
+                    });
+                    ui.add_space(10.0);
 
                     for (idx, (name, t, prio, duty, sub, level, help)) in
                     presets.into_iter().enumerate()
