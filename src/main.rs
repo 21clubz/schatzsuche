@@ -648,6 +648,25 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
     ));
     control.set_word_count(wc);
     control.set_throttle(cfg.run.throttle_percent);
+
+    // Settle on one of the four modes the interface offers. A configuration
+    // can name values that lie between them — the middle priority belongs to
+    // no mode at all — and the panel would then show four unlit rows, leaving
+    // the reader to work out what was running. Snapping first means the answer
+    // is always visible and always true.
+    {
+        let machine = schatzsuche::machine::Machine::detect();
+        let idx = schatzsuche::gui::nearest_mode(
+            &machine,
+            control.active_threads(),
+            control.priority(),
+            control.throttle(),
+        );
+        let (t, p, d) = schatzsuche::gui::modes(&machine)[idx];
+        control.set_active_threads(t);
+        control.set_priority(p);
+        control.set_throttle(d);
+    }
     if cli.start_paused {
         control.set_paused(true);
     }

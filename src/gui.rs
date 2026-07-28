@@ -308,6 +308,49 @@ fn handle_link(ui: &mut Ui, size: f32) {
 /// fixed at compile time for the platform this build targets.
 const NOUN: &str = crate::machine::noun();
 
+/// The four modes the interface offers, as (workers, priority, duty cycle).
+///
+/// Public and shared with startup on purpose: the panel highlights a row only
+/// on an exact match, so a configuration that lands between modes would leave
+/// every row dark. Startup resolves to one of these first, and then the
+/// highlight is always both present and true.
+pub fn modes(m: &crate::machine::Machine) -> [(usize, Priority, u8); 4] {
+    [
+        (1, Priority::Background, 1),
+        (m.economical_threads(), Priority::Background, 100),
+        (m.recommended_threads(), Priority::Normal, 100),
+        (m.max_threads(), Priority::Normal, 100),
+    ]
+}
+
+/// The mode a configuration is in, or the one it is closest to.
+///
+/// Priority weighs heaviest, then the duty cycle, then the worker count: a
+/// setting that differs in how politely it runs is further from a mode than
+/// one that differs by a core. Ties go to the recommended mode, which is the
+/// one a reader is least likely to be surprised by.
+pub fn nearest_mode(
+    m: &crate::machine::Machine,
+    threads: usize,
+    priority: Priority,
+    throttle: u8,
+) -> usize {
+    const RECOMMENDED: usize = 2;
+    let score = |(t, p, d): (usize, Priority, u8)| {
+        let prio = (p as i32 - priority as i32).abs() * 100;
+        let duty = if d == throttle { 0 } else { 50 };
+        prio + duty + (t as i32 - threads as i32).abs()
+    };
+    let table = modes(m);
+    let mut best = RECOMMENDED;
+    for (i, mode) in table.iter().enumerate() {
+        if score(*mode) < score(table[best]) {
+            best = i;
+        }
+    }
+    best
+}
+
 /// One row in the performance list: what it is called, what it costs in a
 /// handful of words, and a five-segment meter for the speed.
 ///
@@ -1338,12 +1381,13 @@ impl GuiApp {
                         cores(machine.recommended_threads())
                     };
 
+                    let table = modes(&machine);
                     let presets = [
                         (
                             "Unauffällig",
-                            1usize,
-                            Priority::Background,
-                            1u8,
+                            table[0].0,
+                            table[0].1,
+                            table[0].2,
                             "1 Kern · läuft unbemerkt mit".to_string(),
                             1u8,
                             "Für nebenher. Der Rechner arbeitet nur ein Prozent der Zeit \
@@ -1353,9 +1397,9 @@ impl GuiApp {
                         ),
                         (
                             "Sparsam",
-                            machine.economical_threads(),
-                            Priority::Background,
-                            100u8,
+                            table[1].0,
+                            table[1].1,
+                            table[1].2,
                             format!("{quiet_cores} Kerne · kühl und leise"),
                             2u8,
                             "Leise, aber schon deutlich schneller. Läuft auf den sparsamen \
@@ -1365,9 +1409,9 @@ impl GuiApp {
                         ),
                         (
                             "Ausgewogen",
-                            machine.recommended_threads(),
-                            Priority::Normal,
-                            100u8,
+                            table[2].0,
+                            table[2].1,
+                            table[2].2,
                             format!("{fast_cores} Kerne · empfohlen"),
                             4u8,
                             "Die Voreinstellung, und für die meisten die richtige. Nutzt die \
@@ -1376,9 +1420,9 @@ impl GuiApp {
                         ),
                         (
                             "Maximum",
-                            max_cores,
-                            Priority::Normal,
-                            100u8,
+                            table[3].0,
+                            table[3].1,
+                            table[3].2,
                             format!("{} · {NOUN} wird warm und laut", cores(max_cores)),
                             5u8,
                             "Alles, was die Maschine hat. Nimm das nur, wenn du den Rechner \
@@ -1387,39 +1431,12 @@ impl GuiApp {
                         ),
                     ];
 
-                    // Which one is running right now. Settings that came from
-                    // config.toml or the expert sliders need not match any of
-                    // these — priority "Normal" is in none of them — and four
-                    // unlit rows told the reader nothing at all about that.
-                    let active_idx = presets.iter().position(|(_, t, prio, duty, ..)| {
-                        threads == (*t).min(max_cores)
-                            && self.control.priority() == *prio
-                            && self.control.throttle() == *duty
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Aktiv:").color(MUTED).size(11.5));
-                        match active_idx {
-                            Some(i) => ui.label(
-                                RichText::new(presets[i].0).color(PRIMARY).size(11.5).strong(),
-                            ),
-                            None => ui.label(
-                                RichText::new(format!(
-                                    "Eigene Einstellung · {} · Priorität {}",
-                                    cores(threads),
-                                    self.control.priority().label()
-                                ))
-                                .color(WARN)
-                                .size(11.5)
-                                .strong(),
-                            ),
-                        };
-                    });
-                    ui.add_space(10.0);
-
                     for (idx, (name, t, prio, duty, sub, level, help)) in
                     presets.into_iter().enumerate()
                 {
                     let t = t.min(max_cores);
+                    // Exact match only. Startup resolves the configuration to
+                    // one of these first, so exactly one row is always lit.
                     let active = threads == t
                         && self.control.priority() == prio
                         && self.control.throttle() == duty;
@@ -1864,6 +1881,39 @@ mod tests {
                 "background should be clearly slower at {t} cores"
             );
         }
+    }
+
+    /// Startup has to land on one of the four modes whatever the config says,
+    /// or the panel shows four unlit rows and no answer to "what is running".
+    #[test]
+    fn every_configuration_lands_on_a_mode() {
+        let m = crate::machine::Machine {
+            physical: 8,
+            performance: 4,
+            efficiency: 4,
+        };
+        let table = modes(&m);
+
+        // A configuration that already names a mode stays where it is.
+        for (i, (t, p, d)) in table.iter().enumerate() {
+            assert_eq!(
+                nearest_mode(&m, *t, *p, *d),
+                i,
+                "mode {i} did not match itself"
+            );
+        }
+
+        // The middle priority belongs to no mode at all. It has to resolve
+        // somewhere, and the recommended mode is the least surprising answer.
+        assert_eq!(nearest_mode(&m, 4, Priority::Utility, 100), 2);
+
+        // Off by a core or two: nearest by worker count within the priority.
+        assert_eq!(nearest_mode(&m, 2, Priority::Normal, 100), 2);
+        assert_eq!(nearest_mode(&m, 7, Priority::Normal, 100), 3);
+        assert_eq!(nearest_mode(&m, 8, Priority::Background, 100), 1);
+
+        // A throttled single worker is the unobtrusive mode, not the quiet one.
+        assert_eq!(nearest_mode(&m, 1, Priority::Background, 1), 0);
     }
 
     /// The model has to behave on machines that are not the one it was
