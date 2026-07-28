@@ -92,7 +92,7 @@ Das Mac-App-Bundle aus einem eigenen Build — nötig, damit der Doppelklick ein
 Fenster öffnet statt eines Terminals:
 
 ```bash
-scripts/make-macos-app.sh target/release/schatzsuche dist
+bash scripts/make-macos-app.sh target/release/schatzsuche dist
 ```
 
 Unter Linux werden dafür die GUI-Bibliotheken gebraucht:

@@ -62,7 +62,10 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           mkdir -p dist
-          scripts/make-macos-app.sh target/${{ matrix.target }}/release/schatzsuche dist
+          # Invoked through bash rather than as ./script: a repository whose
+          # files arrived over the web interface has no executable bits, and a
+          # release that fails on a lost file mode is a bad way to find out.
+          bash scripts/make-macos-app.sh target/${{ matrix.target }}/release/schatzsuche dist
           cp target/${{ matrix.target }}/release/schatzsuche dist/
           cp README.md LICENSE dist/
           COPYFILE_DISABLE=1 tar -czf ${{ matrix.archive }}.tar.gz -C dist .
