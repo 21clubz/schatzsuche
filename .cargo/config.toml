@@ -1,0 +1,9 @@
+# Deliberately no `target-cpu=native`.
+#
+# It helps a local build and ruins a distributed one: a binary compiled on a CI
+# runner would carry that machine's instruction set and fault on anything older.
+# The SHA-512 acceleration this project depends on is selected at runtime by the
+# `cpufeatures` crate, so nothing is lost by leaving it out.
+#
+# For a private build on the machine that will run it:
+#     RUSTFLAGS="-C target-cpu=native" cargo build --release

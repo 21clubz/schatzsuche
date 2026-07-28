@@ -1,0 +1,51 @@
+[package]
+name = "schatzsuche"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+getrandom = "0.2"
+secp256k1 = { version = "0.29", features = ["std"] }
+# `asm` pulls in the aarch64 backend, which uses the M1's FEAT_SHA512
+# instructions instead of the portable software compression function.
+sha2 = { version = "0.10", features = ["asm"] }
+ripemd = "0.1"
+bech32 = "0.11"
+rayon = "1"
+ratatui = "0.28"
+crossterm = "0.28"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+memmap2 = "0.9"
+ureq = { version = "2", features = ["json", "tls"] }
+lettre = { version = "0.11", default-features = false, features = [
+    "smtp-transport",
+    "rustls-tls",
+    "builder",
+] }
+notify-rust = "4"
+eframe = { version = "0.29", default-features = false, features = [
+    "glow",
+    "default_fonts",
+] }
+egui = "0.29"
+bip39 = "2"
+num_cpus = "1"
+
+# Unix-only: hostname, thread priority and the full-fsync barrier.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+bitcoin = "0.32"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = 1
+
+[profile.bench]
+inherits = "release"

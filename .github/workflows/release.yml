@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `target-cpu` is set per target rather than left at the default.
+          # Every arm64 Mac is an M1 or newer, so that baseline is safe and
+          # buys about 13%. For x86 the v2 baseline (SSE4.2, popcnt) covers
+          # everything since roughly 2009; `native` would build for the CI
+          # runner and fault on older machines.
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: schatzsuche-macos-apple-silicon
+            cpu: apple-m1
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: schatzsuche-macos-intel
+            cpu: x86-64-v2
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: schatzsuche-linux-x86_64
+            cpu: x86-64-v2
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: schatzsuche-windows-x86_64
+            cpu: x86-64-v2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux GUI dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libssl-dev libdbus-1-dev
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          RUSTFLAGS: -C target-cpu=${{ matrix.cpu }}
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/schatzsuche dist/
+          cp README.md LICENSE dist/
+          tar -czf ${{ matrix.archive }}.tar.gz -C dist .
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir dist
+          copy target\${{ matrix.target }}\release\schatzsuche.exe dist\
+          copy README.md dist\
+          copy LICENSE dist\
+          Compress-Archive -Path dist\* -DestinationPath ${{ matrix.archive }}.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: |
+            ${{ matrix.archive }}.tar.gz
+            ${{ matrix.archive }}.zip
+          if-no-files-found: ignore
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.tar.gz
+            *.zip
+          generate_release_notes: true

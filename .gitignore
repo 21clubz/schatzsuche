@@ -1,0 +1,17 @@
+/target
+**/*.rs.bk
+
+# Runtime data — never commit a hits file, it would contain seeds.
+/hits.jsonl
+/hits_backup.jsonl
+/pending_alerts.jsonl
+*.jsonl
+*.jsonl.*
+
+# The address database is hundreds of megabytes and is generated, not authored.
+*.scdb
+
+# Local configuration may hold bot tokens and mail passwords.
+/config.toml
+
+.DS_Store
