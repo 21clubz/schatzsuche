@@ -82,7 +82,7 @@ struct Cli {
     #[arg(long, value_name = "N")]
     priority: Option<u8>,
 
-    /// Override mnemonic length (12 or 24).
+    /// Override mnemonic length: 12, 15, 18, 21 or 24.
     #[arg(long, value_name = "N")]
     words: Option<u8>,
 
@@ -245,11 +245,8 @@ fn main() {
 fn dispatch(cli: Cli) -> Result<(), String> {
     match &cli.command {
         Some(Command::Bench { addresses, words }) => {
-            let wc = if *words == 12 {
-                WordCount::W12
-            } else {
-                WordCount::W24
-            };
+            let wc = WordCount::from_words(*words)
+                .ok_or_else(|| format!("--words must be 12, 15, 18, 21 or 24, got {words}"))?;
             schatzsuche::bench::run(*addresses, wc);
             Ok(())
         }
@@ -300,8 +297,8 @@ fn load_config(cli: &Cli) -> Result<Config, String> {
         cfg.run.priority = p;
     }
     if let Some(w) = cli.words {
-        if w != 12 && w != 24 {
-            return Err(format!("--words must be 12 or 24, got {w}"));
+        if WordCount::from_words(w).is_none() {
+            return Err(format!("--words must be 12, 15, 18, 21 or 24, got {w}"));
         }
         cfg.run.word_count = w;
     }
@@ -631,7 +628,6 @@ fn synth_db(count: usize, output: &PathBuf, plant: Option<&str>) -> Result<(), S
 fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
     let threads = cfg.run.effective_threads();
     let wc = cfg.run.word_count_enum();
-    let entropy_bits = (wc.entropy_bytes() * 8) as u32;
     let per_seed = cfg.run.addresses_per_path * 3;
 
     let stats = Arc::new(Stats::new());
@@ -640,6 +636,7 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
         cfg.run.addresses_per_path,
         Priority::from_u8(cfg.run.priority),
     ));
+    control.set_word_count(wc);
     if cli.start_paused {
         control.set_paused(true);
     }
@@ -712,7 +709,6 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
             existing,
             0,
             per_seed,
-            entropy_bits,
             threads,
             0,
             0,

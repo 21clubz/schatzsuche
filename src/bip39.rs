@@ -18,18 +18,37 @@ pub const PBKDF2_ROUNDS: u32 = 2048;
 /// SHA-512 block size in bytes; also the HMAC pad width.
 const BLOCK: usize = 128;
 
-/// Supported mnemonic lengths.
+/// Supported mnemonic lengths — the five BIP-39 defines.
+///
+/// Every one of them carries a checksum of at most eight bits, which is why a
+/// single SHA-256 byte covers the whole family in [`entropy_to_mnemonic`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum WordCount {
     W12,
+    W15,
+    W18,
+    W21,
     W24,
 }
+
+/// The lengths, shortest first. Used by the interfaces to offer the choice
+/// without hard-coding a list that could drift from the enum.
+pub const ALL_WORD_COUNTS: [WordCount; 5] = [
+    WordCount::W12,
+    WordCount::W15,
+    WordCount::W18,
+    WordCount::W21,
+    WordCount::W24,
+];
 
 impl WordCount {
     /// Entropy bytes backing this mnemonic length.
     pub const fn entropy_bytes(self) -> usize {
         match self {
             WordCount::W12 => 16,
+            WordCount::W15 => 20,
+            WordCount::W18 => 24,
+            WordCount::W21 => 28,
             WordCount::W24 => 32,
         }
     }
@@ -37,7 +56,28 @@ impl WordCount {
     pub const fn words(self) -> usize {
         match self {
             WordCount::W12 => 12,
+            WordCount::W15 => 15,
+            WordCount::W18 => 18,
+            WordCount::W21 => 21,
             WordCount::W24 => 24,
+        }
+    }
+
+    /// Entropy bits — the exponent of the keyspace this length searches.
+    pub const fn entropy_bits(self) -> u32 {
+        (self.entropy_bytes() * 8) as u32
+    }
+
+    /// Parses a word count written by a human, in `config.toml` or on the
+    /// command line. `None` for anything BIP-39 does not define.
+    pub const fn from_words(n: u8) -> Option<WordCount> {
+        match n {
+            12 => Some(WordCount::W12),
+            15 => Some(WordCount::W15),
+            18 => Some(WordCount::W18),
+            21 => Some(WordCount::W21),
+            24 => Some(WordCount::W24),
+            _ => None,
         }
     }
 
@@ -223,28 +263,53 @@ mod tests {
     /// a single fixed vector would not catch.
     #[test]
     fn matches_reference_crate() {
-        for n in 0u32..256 {
-            let mut e16 = [0u8; 16];
-            let mut e32 = [0u8; 32];
-            for (i, b) in e16.iter_mut().enumerate() {
-                *b = (n.wrapping_mul(31).wrapping_add(i as u32 * 7)) as u8;
-            }
-            for (i, b) in e32.iter_mut().enumerate() {
-                *b = (n.wrapping_mul(17).wrapping_add(i as u32 * 13)) as u8;
-            }
+        // Every length BIP-39 defines, not just the two ends of the range: the
+        // checksum is five bits at fifteen words and seven at twenty-one, and
+        // an off-by-one there would produce a mnemonic that looks perfectly
+        // plausible and is wrong.
+        for n in 0u32..64 {
+            for wc in ALL_WORD_COUNTS {
+                let mut entropy = vec![0u8; wc.entropy_bytes()];
+                for (i, b) in entropy.iter_mut().enumerate() {
+                    *b = (n.wrapping_mul(31).wrapping_add(i as u32 * 7)) as u8;
+                }
 
-            for (entropy, wc) in [(&e16[..], WordCount::W12), (&e32[..], WordCount::W24)] {
                 let mut ours = String::new();
-                entropy_to_mnemonic(entropy, wc, &mut ours);
+                entropy_to_mnemonic(&entropy, wc, &mut ours);
+                assert_eq!(
+                    ours.split_whitespace().count(),
+                    wc.words(),
+                    "wrong word count for {wc:?}"
+                );
 
-                let theirs = bip39::Mnemonic::from_entropy(entropy).unwrap().to_string();
-                assert_eq!(ours, theirs, "mnemonic mismatch for entropy {entropy:?}");
+                let theirs = bip39::Mnemonic::from_entropy(&entropy).unwrap().to_string();
+                assert_eq!(ours, theirs, "mnemonic mismatch for {wc:?} {entropy:?}");
 
                 let mut our_seed = [0u8; 64];
                 Pbkdf2Ctx::new().seed(&ours, "", &mut our_seed);
                 let their_seed = bip39::Mnemonic::parse(&theirs).unwrap().to_seed("");
                 assert_eq!(our_seed, their_seed, "seed mismatch for {ours}");
             }
+        }
+    }
+
+    /// The lengths and their keyspaces have to agree with BIP-39 arithmetic:
+    /// eleven bits per word, of which the last few are the checksum.
+    #[test]
+    fn every_length_adds_up() {
+        for wc in ALL_WORD_COUNTS {
+            let entropy_bits = wc.entropy_bits() as usize;
+            let checksum = entropy_bits / 32;
+            assert_eq!(
+                entropy_bits + checksum,
+                wc.words() * 11,
+                "{wc:?} does not divide into 11-bit words"
+            );
+            assert!(checksum <= 8, "{wc:?} needs more than one checksum byte");
+            assert_eq!(WordCount::from_words(wc.words() as u8), Some(wc));
+        }
+        for bad in [0u8, 11, 13, 16, 20, 23, 25, 255] {
+            assert_eq!(WordCount::from_words(bad), None, "{bad} is not BIP-39");
         }
     }
 }

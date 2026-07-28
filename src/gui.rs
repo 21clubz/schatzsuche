@@ -52,7 +52,6 @@ pub struct GuiApp {
     started: Instant,
     funded_count: u64,
     addresses_per_seed: u32,
-    entropy_bits: u32,
     threads: usize,
     bloom_bytes: usize,
     db_bytes: usize,
@@ -80,7 +79,6 @@ impl GuiApp {
         existing: Vec<Hit>,
         funded_count: u64,
         addresses_per_seed: u32,
-        entropy_bits: u32,
         threads: usize,
         bloom_bytes: usize,
         db_bytes: usize,
@@ -99,7 +97,6 @@ impl GuiApp {
             started: Instant::now(),
             funded_count,
             addresses_per_seed,
-            entropy_bits,
             threads,
             bloom_bytes,
             db_bytes,
@@ -113,6 +110,15 @@ impl GuiApp {
             expert_unlocked: std::env::var("SC_SHOT_SETTINGS").is_ok(),
             expert_prompt: false,
         }
+    }
+
+    /// Keyspace exponent of the mnemonic length currently being drawn.
+    ///
+    /// Read from the control rather than stored, because the length can be
+    /// changed while the search runs and a cached copy would keep advertising
+    /// the keyspace of a setting that is no longer in use.
+    fn entropy_bits(&self) -> u32 {
+        self.control.word_count().entropy_bits()
     }
 
     /// Throughput as a fraction of what this machine delivers at full tilt.
@@ -717,14 +723,21 @@ impl GuiApp {
                         kv(ui, "Fehlalarme", &thousands(self.stats.bloom_hits()), DIM);
                     });
                     card(&mut c[2], "SUCHRAUM", PRIMARY, |ui| {
-                        let frac = seeds as f64 / 2f64.powi(self.entropy_bits as i32) * 100.0;
+                        let bits = self.entropy_bits();
+                        let frac = seeds as f64 / 2f64.powi(bits as i32) * 100.0;
                         hero(
                             ui,
                             &format!("{} %", sci(frac)),
                             "des Suchraums abgesucht",
                             WARN,
                         );
-                        kv(ui, "Suchraum", &format!("2^{}", self.entropy_bits), DIM);
+                        kv(
+                            ui,
+                            "Wortlänge",
+                            &format!("{} Wörter", self.control.word_count().words()),
+                            DIM,
+                        );
+                        kv(ui, "Suchraum", &format!("2^{bits}"), DIM);
                         kv(ui, "Datenbank", &thousands(self.funded_count), DIM);
                         kv(
                             ui,
@@ -1211,6 +1224,52 @@ impl GuiApp {
                     ui.label(RichText::new(hint).color(MUTED).size(11.0));
                     ui.add_space(8.0);
                 }
+
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                // Mnemonic length. Not behind the expert gate: it is a plain
+                // question about what is being searched, not a knob that can
+                // make the machine unpleasant to use.
+                ui.label(
+                    RichText::new("WORTLÄNGE")
+                        .color(PRIMARY)
+                        .size(11.0)
+                        .strong(),
+                );
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    for wc in crate::bip39::ALL_WORD_COUNTS {
+                        let on = self.control.word_count() == wc;
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new(format!("{}", wc.words()))
+                                        .color(if on { Color32::BLACK } else { TEXT })
+                                        .size(12.0),
+                                )
+                                .fill(if on { PRIMARY } else { BG })
+                                .stroke(Stroke::new(1.0_f32, FRAME))
+                                .rounding(Rounding::same(5.0)),
+                            )
+                            .clicked()
+                        {
+                            self.control.set_word_count(wc);
+                        }
+                    }
+                });
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Suchraum 2^{}. Jede Stufe kürzer sind drei Wörter weniger und \
+                         damit ein 4-Milliarden-fach kleinerer Raum — aussichtsreich \
+                         wird die Suche dadurch nicht.",
+                        self.entropy_bits()
+                    ))
+                    .color(MUTED)
+                    .size(11.0),
+                );
 
                 ui.add_space(6.0);
                 ui.separator();

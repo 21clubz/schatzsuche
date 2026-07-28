@@ -100,7 +100,6 @@ pub struct App {
     peak: f64,
     funded_count: u64,
     addresses_per_seed: u32,
-    entropy_bits: u32,
     threads: usize,
     bloom_bytes: usize,
     db_bytes: usize,
@@ -117,7 +116,6 @@ impl App {
         existing: Vec<Hit>,
         funded_count: u64,
         addresses_per_seed: u32,
-        entropy_bits: u32,
         threads: usize,
         bloom_bytes: usize,
         db_bytes: usize,
@@ -136,7 +134,6 @@ impl App {
             peak: 0.0,
             funded_count,
             addresses_per_seed,
-            entropy_bits,
             threads,
             bloom_bytes,
             db_bytes,
@@ -152,9 +149,15 @@ impl App {
         universe_ages_to_hit(self.funded_count, self.addresses_per_seed, rate)
     }
 
+    /// Keyspace exponent of the mnemonic length currently being drawn. Read
+    /// from the control, since the length is adjustable while running.
+    fn entropy_bits(&self) -> u32 {
+        self.control.word_count().entropy_bits()
+    }
+
     /// Fraction of the seed keyspace covered so far.
     fn keyspace_fraction(&self, seeds: u64) -> f64 {
-        seeds as f64 / 2f64.powi(self.entropy_bits as i32)
+        seeds as f64 / 2f64.powi(self.entropy_bits() as i32)
     }
 
     fn drain_events(&mut self) {
@@ -844,9 +847,12 @@ fn draw_metrics(
         "des Suchraums abgesucht",
         C_WARN,
     );
+    // The panel has room for four rows. The word length is legible from the
+    // keyspace exponent, so it does not get one of its own — adding a fifth
+    // pushed "Speicher" off the bottom.
     space.push(kv(
         "Suchraum",
-        format!("{:>13}", format!("2^{}", app.entropy_bits)),
+        format!("{:>13}", format!("2^{}", app.entropy_bits())),
         C_DIM,
     ));
     space.push(kv(
@@ -1226,16 +1232,25 @@ mod tests {
     use super::*;
     use std::sync::mpsc::channel;
 
+    /// `bits` names a mnemonic length rather than a raw number now: the app
+    /// reads the keyspace from the control, so the test sets it there.
     fn app_with(funded: u64, per_seed: u32, bits: u32) -> App {
         let (_tx, rx) = channel();
+        let control = Arc::new(Control::new(8, 20, crate::stats::Priority::Normal));
+        control.set_word_count(match bits {
+            128 => crate::bip39::WordCount::W12,
+            160 => crate::bip39::WordCount::W15,
+            192 => crate::bip39::WordCount::W18,
+            224 => crate::bip39::WordCount::W21,
+            _ => crate::bip39::WordCount::W24,
+        });
         App::new(
             Arc::new(Stats::new()),
-            Arc::new(Control::new(8, 20, crate::stats::Priority::Normal)),
+            control,
             rx,
             Vec::new(),
             funded,
             per_seed,
-            bits,
             8,
             0,
             0,

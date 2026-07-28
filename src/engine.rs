@@ -109,8 +109,9 @@ fn worker(shared: &Shared, index: usize) {
     let mut priority = shared.control.priority();
     apply_priority(priority);
 
-    let wc = shared.word_count;
-    let n_bytes = wc.entropy_bytes();
+    // Read per candidate, not hoisted: that is what lets the mnemonic length
+    // change while the search runs. A relaxed atomic load against the 700
+    // microseconds of PBKDF2 that follow it does not register.
     let mut entropy = [0u8; 32];
 
     // Reused across candidates; a hit is so rare that this never grows.
@@ -118,6 +119,8 @@ fn worker(shared: &Shared, index: usize) {
     let mut since_flush = 0u64;
 
     loop {
+        let wc = shared.control.word_count();
+        let n_bytes = wc.entropy_bytes();
         entropy_src.fill(&mut entropy[..n_bytes]);
         deriver.stretch(&entropy[..n_bytes], wc);
 

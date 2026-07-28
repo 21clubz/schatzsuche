@@ -56,10 +56,7 @@ impl Default for Run {
 
 impl Run {
     pub fn word_count_enum(&self) -> WordCount {
-        match self.word_count {
-            12 => WordCount::W12,
-            _ => WordCount::W24,
-        }
+        WordCount::from_words(self.word_count).unwrap_or(WordCount::W24)
     }
 
     /// Physical cores, falling back to logical if the count is unavailable.
@@ -281,6 +278,11 @@ impl Config {
 # machine that has separate fast and slow ones, half the cores otherwise. Set a
 # number here to override that permanently; the interface can also change it
 # while the search runs, without restarting.
+#
+# run.word_count is any BIP-39 length: 12, 15, 18, 21 or 24. Also changeable
+# while running. A shorter mnemonic searches a smaller space, not a more
+# promising one — a hit needs a collision in the 160-bit address space either
+# way.
 
 ";
         write_owner_only(path, &format!("{header}{text}"))
@@ -356,9 +358,9 @@ impl Config {
                 ));
             }
         }
-        if self.run.word_count != 12 && self.run.word_count != 24 {
+        if WordCount::from_words(self.run.word_count).is_none() {
             return Err(format!(
-                "word_count muss 12 oder 24 sein, steht aber auf {}",
+                "word_count muss 12, 15, 18, 21 oder 24 sein, steht aber auf {}",
                 self.run.word_count
             ));
         }
@@ -475,6 +477,18 @@ mod tests {
         assert_eq!(mode, 0o600, "config template is readable by others");
     }
 
+    /// Every length BIP-39 defines has to survive the round trip through the
+    /// config, since the interface now offers all five.
+    #[test]
+    fn all_bip39_lengths_are_accepted() {
+        for wc in crate::bip39::ALL_WORD_COUNTS {
+            let mut c = Config::default();
+            c.run.word_count = wc.words() as u8;
+            assert!(c.validate().is_ok(), "{wc:?} rejected");
+            assert_eq!(c.run.word_count_enum(), wc);
+        }
+    }
+
     /// A partial file must not wipe out the other sections.
     #[test]
     fn partial_config_keeps_defaults() {
@@ -534,7 +548,7 @@ mod tests {
     #[test]
     fn nonsense_values_are_rejected() {
         let mut c = Config::default();
-        c.run.word_count = 15;
+        c.run.word_count = 13;
         assert!(c.validate().is_err());
 
         let mut c = Config::default();

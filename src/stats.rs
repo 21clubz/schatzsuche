@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}
 use std::sync::{Condvar, Mutex};
 use std::time::Instant;
 
+use crate::bip39::WordCount;
+
 /// How many candidates a worker processes before publishing its counters.
 pub const FLUSH_EVERY: u64 = 32;
 
@@ -122,6 +124,10 @@ pub struct Control {
     addresses_per_path: AtomicU32,
     /// A [`Priority`] discriminant.
     priority: AtomicU8Wrapper,
+    /// Mnemonic length as a word count, adjustable live. Stored as the number
+    /// a human would say rather than an enum discriminant, so a bad value can
+    /// only ever fall back to 24 instead of meaning something else.
+    word_count: AtomicU8Wrapper,
     /// Guards the state transitions so a pause cannot be missed between the
     /// flag check and the wait.
     lock: Mutex<()>,
@@ -145,6 +151,7 @@ impl Control {
             active_threads: AtomicUsize::new(threads.max(1)),
             addresses_per_path: AtomicU32::new(addresses_per_path.max(1)),
             priority: AtomicU8Wrapper::new(priority as u8),
+            word_count: AtomicU8Wrapper::new(WordCount::W24.words() as u8),
             lock: Mutex::new(()),
             wake: Condvar::new(),
         }
@@ -175,6 +182,20 @@ impl Control {
 
     pub fn set_priority(&self, p: Priority) {
         self.priority.store(p as u8, Ordering::Relaxed);
+    }
+
+    /// The mnemonic length the workers are currently drawing.
+    ///
+    /// Read once per candidate rather than hoisted out of the loop, which is
+    /// what lets the length change without restarting the search. One relaxed
+    /// atomic load against 700 microseconds of PBKDF2 is not measurable.
+    #[inline]
+    pub fn word_count(&self) -> WordCount {
+        WordCount::from_words(self.word_count.load(Ordering::Relaxed)).unwrap_or(WordCount::W24)
+    }
+
+    pub fn set_word_count(&self, wc: WordCount) {
+        self.word_count.store(wc.words() as u8, Ordering::Relaxed);
     }
 
     /// True when the worker with this index should be doing work.

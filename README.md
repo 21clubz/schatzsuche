@@ -131,6 +131,28 @@ das Fenster.
 
 Ein ausgewählter Treffer zeigt seine Wörter nummeriert im rechten Feld.
 
+## Wortlänge
+
+BIP-39 kennt fünf Längen, und alle fünf lassen sich wählen — in den
+Einstellungen, **im laufenden Betrieb**, ohne Neustart:
+
+| Wörter | Entropie | Suchraum |
+| --- | --- | --- |
+| 12 | 128 Bit | 2¹²⁸ |
+| 15 | 160 Bit | 2¹⁶⁰ |
+| 18 | 192 Bit | 2¹⁹² |
+| 21 | 224 Bit | 2²²⁴ |
+| 24 | 256 Bit | 2²⁵⁶ |
+
+Dauerhaft über `word_count` in der `config.toml` oder `--words 12` beim Start.
+
+Jede Stufe kürzer sind drei Wörter weniger und damit ein 4-Milliarden-fach
+kleinerer Raum. **An der Aussichtslosigkeit ändert das nichts** — und an der
+Hochrechnung oben ebenfalls nicht: Ein Treffer verlangt eine Kollision im
+160-Bit-Adressraum, und der ist bei zwölf Wörtern derselbe wie bei
+vierundzwanzig. Kürzere Seeds durchsuchen ihren eigenen Raum schneller, ohne
+einer fremden Wallet näher zu kommen.
+
 ## Leistung und Stromverbrauch
 
 **Das Programm sucht sich seine Einstellung selbst.** Beim Start liest es die
@@ -293,7 +315,7 @@ Gemessen gegen 5 Mio. Einträge: 2 Fehlalarme auf 2,39 Mio. Abfragen (8,4e-7) be
 cargo test --release
 ```
 
-100 Tests. Die tragenden:
+102 Tests. Die tragenden:
 
 * BIP-39/32/44/49/84-Ableitung gegen die Referenzbibliotheken `bitcoin` und
   `bip39` über zufällige Seeds, plus die veröffentlichten Testvektoren.
