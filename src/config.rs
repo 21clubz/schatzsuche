@@ -278,7 +278,7 @@ impl Config {
 # Enable at least one alert channel and verify it with `--test-alert`.
 
 ";
-        std::fs::write(path, format!("{header}{text}"))
+        write_owner_only(path, &format!("{header}{text}"))
             .map_err(|e| format!("cannot write {}: {e}", path.display()))
     }
 
@@ -408,6 +408,35 @@ pub fn parse_duration(s: &str) -> Option<Duration> {
     Some(Duration::from_secs(n.saturating_mul(mult)))
 }
 
+/// Writes a file only its owner can read.
+///
+/// The template ships with an SMTP password field and a Telegram bot token,
+/// which are credentials like any other. Hit files are created 0600 for that
+/// reason, and a world-readable config on a shared machine would hand away the
+/// notification channels while the seeds themselves stayed locked.
+#[cfg(unix)]
+fn write_owner_only(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(contents.as_bytes())?;
+    // `mode` above only applies while creating. An existing file keeps whatever
+    // it had, so tighten it explicitly rather than trusting the open flags.
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+}
+
+/// Windows has no mode bits; the per-user profile directory is the protection.
+#[cfg(not(unix))]
+fn write_owner_only(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    std::fs::write(path, contents)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,6 +449,25 @@ mod tests {
         assert_eq!(parsed.run.addresses_per_path, 20);
         assert_eq!(parsed.alerts.max_attempts, 5);
         assert_eq!(parsed.alerts.retry_interval_secs, 60);
+    }
+
+    /// The template holds an SMTP password and a bot token once filled in, so
+    /// it must not be readable by other users of the machine.
+    #[cfg(unix)]
+    #[test]
+    fn config_template_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("schatzsuche-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        let _ = std::fs::remove_file(&path);
+
+        Config::write_template(&path).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(mode, 0o600, "config template is readable by others");
     }
 
     /// A partial file must not wipe out the other sections.
