@@ -1,57 +1,153 @@
 //! Recovering *your own* seed when part of it is lost.
 //!
-//! This is the honest inverse of the collider. The main search is hopeless on
-//! purpose: it looks for anyone's wallet across the whole keyspace, and the
-//! numbers say it finds nothing. Here the target is a single wallet you can
-//! prove is yours — you hold most of the words — so the space is small enough
-//! that a hit is not only possible but likely.
+//! The honest inverse of the collider. The main search is hopeless on purpose;
+//! recovering a wallet you can prove is yours is not, because you hold most of
+//! the words and the space that remains is small.
 //!
-//! Three kinds of loss are handled:
+//! Rather than a fixed list of failure modes, every position carries a state:
 //!
-//! * **Missing words** — you wrote `?` where a word is gone. Each blank is one
-//!   of 2048, so the raw space is 2048 to the power of the number of blanks;
-//!   the checksum then throws all but one in 16..256 away before any
-//!   derivation happens.
-//! * **A wrong word** — every word is there but one is mistyped, and you do
-//!   not know which. Every position is tried against all 2048 words.
-//! * **Two words swapped** — the words are right but two adjacent ones changed
-//!   places. Every adjacent pair is tried.
+//! * **Sure** — the word is right and fixed.
+//! * **Unknown / unsure** — the word could be anything; all 2048 are tried. An
+//!   empty field is unknown; a filled field marked unsure is the same search,
+//!   the text only a reminder.
+//! * **Moved** — the word is right but its place is not. Adjacent moved words
+//!   form a run that is tried in every order.
 //!
-//! What is deliberately *not* offered is a free permutation of all the words:
-//! twenty-four words rearrange 6·10²³ ways, which is back in collider
-//! territory, and pretending otherwise would be the dishonest thing this whole
-//! program exists to argue against.
+//! These combine: two unknown words and a swapped pair is one search. The size
+//! is the product — 2048 per unknown, k! per moved run of length k — and the
+//! checksum throws almost all of it away before any derivation.
+//!
+//! A free permutation of *all* the words is refused by the size cap: 24 words
+//! rearrange 6·10²³ ways, which is collider territory again.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
 use crate::address::{decode, script_hashes, Kind};
 use crate::bip32::Node;
-use crate::bip39::{indices_to_entropy, word_index, wordlist, Pbkdf2Ctx, WordCount};
+use crate::bip39::{indices_to_entropy, wordlist, Pbkdf2Ctx, WordCount};
 use crate::deriver::external_chain;
 
-/// How the seed was damaged.
+/// Refuse a search larger than this many candidates. About a day at the rate a
+/// laptop checks them; past it, recovery is not the right tool.
+pub const MAX_CANDIDATES: u64 = 20_000_000_000;
+
+/// The state of one word in the seed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
-    /// Blanks (`?`) are filled in.
-    Missing,
-    /// One word is wrong; every position is retried against the whole list.
-    Typo,
-    /// Two adjacent words are swapped.
-    Swap,
+pub enum State {
+    /// Right and fixed.
+    Sure,
+    /// Present but doubtful, or missing entirely; all 2048 words are tried.
+    Unsure,
+    /// Right, but possibly out of place; tried in every order with its
+    /// adjacent moved neighbours.
+    Moved,
 }
 
-/// A recovery job, parsed and validated but not yet run.
-pub struct Plan {
-    pub mode: Mode,
-    /// Word indices, with `None` for a blank. Length is the mnemonic length.
-    words: Vec<Option<u16>>,
+/// The shape of a recovery, without a target address.
+///
+/// Split from [`Plan`] so the window can price the search and surface input
+/// errors while the address field is still empty.
+pub struct Layout {
+    /// One per position: the word index, or `None` where it is unknown.
+    base: Vec<Option<u16>>,
+    /// Runs of adjacent Moved positions, each tried in every order.
+    swaps: Vec<Vec<usize>>,
     pub word_count: WordCount,
-    /// The address the recovered seed must produce, and its script kind.
+}
+
+impl Layout {
+    /// Builds a layout from a word and a state per position.
+    ///
+    /// `words` and `states` must be the same length, and that length a valid
+    /// mnemonic size. An empty word is Unknown whatever its state says.
+    pub fn build(words: &[String], states: &[State]) -> Result<Layout, String> {
+        if words.len() != states.len() {
+            return Err("interner Fehler: Wörter und Zustände unterschiedlich lang".into());
+        }
+        let word_count = WordCount::from_words(words.len() as u8).ok_or_else(|| {
+            format!(
+                "eine Seed hat 12, 15, 18, 21 oder 24 Wörter, hier sind es {}",
+                words.len()
+            )
+        })?;
+
+        let mut base = Vec::with_capacity(words.len());
+        for (i, (w, st)) in words.iter().zip(states).enumerate() {
+            let trimmed = w.trim();
+            if trimmed.is_empty() || *st == State::Unsure {
+                base.push(None);
+                continue;
+            }
+            let idx = crate::bip39::word_index(trimmed)
+                .ok_or_else(|| format!("Wort {} („{trimmed}“) ist kein BIP-39-Wort", i + 1))?;
+            base.push(Some(idx));
+        }
+
+        // Adjacent Moved positions that carry a word form a swap run. A word
+        // that is empty cannot be "moved" — there is nothing to place — so it
+        // falls through to Unknown above and never joins a run.
+        let mut swaps = Vec::new();
+        let mut run: Vec<usize> = Vec::new();
+        let flush = |run: &mut Vec<usize>, swaps: &mut Vec<Vec<usize>>| {
+            if run.len() >= 2 {
+                swaps.push(run.clone());
+            }
+            run.clear();
+        };
+        for (i, st) in states.iter().enumerate() {
+            let is_run = *st == State::Moved && base[i].is_some();
+            if is_run {
+                run.push(i);
+            } else {
+                flush(&mut run, &mut swaps);
+            }
+        }
+        flush(&mut run, &mut swaps);
+
+        Ok(Layout {
+            base,
+            swaps,
+            word_count,
+        })
+    }
+
+    /// Candidate count before the checksum: the size to warn on.
+    pub fn candidate_count(&self) -> u64 {
+        let mut n: u64 = 1;
+        for slot in &self.base {
+            if slot.is_none() {
+                n = n.saturating_mul(2048);
+            }
+        }
+        // A Moved position is fixed in `base`; the ordering is what varies, so
+        // each swap run multiplies by its factorial and its members are not
+        // also counted as free above.
+        for run in &self.swaps {
+            n = n.saturating_mul(factorial(run.len() as u64));
+        }
+        n
+    }
+
+    /// True when nothing is actually being searched — every word sure and in
+    /// place. The window uses this to keep Start dead on a complete seed.
+    pub fn is_trivial(&self) -> bool {
+        self.candidate_count() <= 1
+    }
+}
+
+fn factorial(n: u64) -> u64 {
+    (1..=n).product::<u64>().max(1)
+}
+
+/// A recovery job: a [`Layout`] plus the address it must produce.
+pub struct Plan {
+    base: Vec<Option<u16>>,
+    swaps: Vec<Vec<usize>>,
+    pub word_count: WordCount,
     target: [u8; 20],
     target_kind: Kind,
-    pub target_str: String,
-    /// Addresses derived per BIP path before giving up on a candidate.
     pub depth: u32,
 }
 
@@ -63,129 +159,44 @@ pub struct Found {
     pub path: String,
 }
 
-/// The words half of a job: everything checkable before an address is given.
-///
-/// Split out so the window can show the search space and any input error while
-/// the address field is still empty, rather than staying silent until the
-/// whole form is filled.
-pub struct Words {
-    parsed: Vec<Option<u16>>,
-    pub word_count: WordCount,
-    pub mode: Mode,
-}
-
-impl Words {
-    /// Parses and checks the words for a mode, without an address.
-    pub fn parse(words: &str, mode: Mode) -> Result<Words, String> {
-        let tokens: Vec<&str> = words.split_whitespace().collect();
-        let word_count = WordCount::from_words(tokens.len() as u8).ok_or_else(|| {
-            format!(
-                "eine Seed hat 12, 15, 18, 21 oder 24 Wörter, hier sind es {}",
-                tokens.len()
-            )
-        })?;
-
-        let mut parsed = Vec::with_capacity(tokens.len());
-        for (i, tok) in tokens.iter().enumerate() {
-            if *tok == "?" {
-                parsed.push(None);
-            } else {
-                let idx = word_index(tok).ok_or_else(|| {
-                    format!("Wort {} („{tok}“) steht nicht auf der BIP-39-Liste", i + 1)
-                })?;
-                parsed.push(Some(idx));
-            }
-        }
-
-        let blanks = parsed.iter().filter(|w| w.is_none()).count();
-        match mode {
-            Mode::Missing if blanks == 0 => {
-                return Err("kein „?“ angegeben — im Modus „fehlende Wörter“ markiert \
-                            man die Lücken mit einem Fragezeichen"
-                    .into())
-            }
-            Mode::Missing if blanks > 4 => {
-                return Err(format!(
-                    "{blanks} fehlende Wörter sind zu viele: der Suchraum wächst je Lücke \
-                     um das 2048-fache und wird jenseits von vier praktisch unendlich"
-                ))
-            }
-            Mode::Typo | Mode::Swap if blanks > 0 => {
-                return Err("in diesem Modus dürfen keine „?“ stehen — er sucht einen \
-                            Fehler, kein fehlendes Wort"
-                    .into())
-            }
-            _ => {}
-        }
-
-        Ok(Words {
-            parsed,
-            word_count,
-            mode,
-        })
-    }
-
-    /// Candidate count for these words alone — same figure [`Plan`] reports.
-    pub fn candidate_count(&self) -> u64 {
-        candidate_count(self.mode, &self.parsed)
-    }
-}
-
-/// Seconds a search of `candidates` mnemonics is expected to take.
-///
-/// The checksum-fail path is a single SHA-256; the fraction that pass add
-/// PBKDF2 and derivation. Both costs were measured on an M1, and the estimate
-/// is deliberately high — better to promise ten minutes and finish in two.
-/// Shared by the terminal command and the window so they agree.
-pub fn estimate_secs(candidates: u64, wc: WordCount) -> f64 {
-    const CHEAP_PER: f64 = 0.09e-6;
-    const DERIVE_PER: f64 = 2.5e-3;
-    let total = candidates as f64;
-    let pass_fraction = 1.0 / 2f64.powi(wc.checksum_bits() as i32);
-    total * CHEAP_PER + total * pass_fraction * DERIVE_PER
-}
-
-/// Shared by [`Words`] and [`Plan`]: the size of the space before the checksum.
-fn candidate_count(mode: Mode, words: &[Option<u16>]) -> u64 {
-    match mode {
-        Mode::Missing => {
-            let blanks = words.iter().filter(|w| w.is_none()).count() as u32;
-            2048u64.saturating_pow(blanks)
-        }
-        Mode::Typo => words.len() as u64 * 2048,
-        Mode::Swap => words.len().saturating_sub(1) as u64,
-    }
-}
-
 impl Plan {
-    /// Parses the words, the target address and the mode into a job.
-    ///
-    /// `words` is whitespace-separated, with `?` for a blank. Blanks are only
-    /// meaningful in [`Mode::Missing`]; the other modes reject them, since a
-    /// missing word and a wrong word are different problems.
-    pub fn new(words: &str, target: &str, mode: Mode, depth: u32) -> Result<Plan, String> {
-        let checked = Words::parse(words, mode)?;
-
+    /// Combines a layout with a target address.
+    pub fn new(layout: Layout, target: &str, depth: u32) -> Result<Plan, String> {
+        let count = layout.candidate_count();
+        if count <= 1 {
+            return Err(
+                "hier ist nichts zu suchen — markiere mindestens ein Wort als \
+                        unbekannt, unsicher oder verrutscht"
+                    .into(),
+            );
+        }
+        if count > MAX_CANDIDATES {
+            return Err(format!(
+                "der Suchraum ist zu groß ({} Kombinationen). Markiere weniger Wörter \
+                 als unbekannt.",
+                crate::util::group_digits(count)
+            ));
+        }
         let (target_kind, target) =
             decode(target.trim()).ok_or("die Zieladresse ist keine gültige Bitcoin-Adresse")?;
 
         Ok(Plan {
-            mode,
-            words: checked.parsed,
-            word_count: checked.word_count,
+            base: layout.base,
+            swaps: layout.swaps,
+            word_count: layout.word_count,
             target,
             target_kind,
-            target_str: target.iter().map(|b| format!("{b:02x}")).collect(),
             depth,
         })
     }
 
-    /// How many candidate mnemonics the search will examine.
-    ///
-    /// Before the checksum, which is the honest number to warn on: it is what
-    /// bounds the time, even though only a fraction reach derivation.
     pub fn candidate_count(&self) -> u64 {
-        candidate_count(self.mode, &self.words)
+        Layout {
+            base: self.base.clone(),
+            swaps: self.swaps.clone(),
+            word_count: self.word_count,
+        }
+        .candidate_count()
     }
 
     /// Seconds the search is expected to take. See [`estimate_secs`].
@@ -193,9 +204,9 @@ impl Plan {
         estimate_secs(self.candidate_count(), self.word_count)
     }
 
-    /// Runs the search, calling `progress` with the running candidate count and
-    /// stopping early if `cancel` is set. Returns the first seed that produces
-    /// the target address, or `None` if the space is exhausted.
+    /// Runs the search on the calling thread, reporting progress through
+    /// `counter` and stopping when `cancel` is set. Returns the first seed
+    /// that hits the target, or `None`.
     pub fn run(&self, cancel: &Arc<AtomicBool>, counter: &Arc<AtomicU64>) -> Option<Found> {
         let mut engine = Engine::new(self);
         let mut done = 0u64;
@@ -210,74 +221,111 @@ impl Plan {
             engine.try_candidate(indices)
         };
 
-        let mut buf: Vec<u16> = self.words.iter().map(|w| w.unwrap_or(0)).collect();
+        // The search dimensions: each free position, then each swap run with
+        // its precomputed orderings. A run's positions carry their base word.
+        let mut dims = Vec::new();
+        for (i, slot) in self.base.iter().enumerate() {
+            if slot.is_none() && !self.swaps.iter().any(|r| r.contains(&i)) {
+                dims.push(Dim::Free(i));
+            }
+        }
+        for run in &self.swaps {
+            let vals: Vec<u16> = run.iter().map(|&i| self.base[i].unwrap()).collect();
+            dims.push(Dim::Swap(run.clone(), permutations(&vals)));
+        }
 
-        match self.mode {
-            Mode::Missing => {
-                let blanks: Vec<usize> = self
-                    .words
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, w)| w.is_none())
-                    .map(|(i, _)| i)
-                    .collect();
-                self.fill_blanks(&mut buf, &blanks, 0, cancel, &mut check)
-            }
-            Mode::Typo => {
-                for pos in 0..buf.len() {
-                    let original = buf[pos];
-                    for w in 0..2048u16 {
-                        if cancel.load(Ordering::Relaxed) {
-                            return None;
-                        }
-                        buf[pos] = w;
-                        if let Some(f) = check(&buf) {
-                            return Some(f);
-                        }
-                    }
-                    buf[pos] = original;
+        let mut buf: Vec<u16> = self.base.iter().map(|w| w.unwrap_or(0)).collect();
+        recurse(&dims, 0, &mut buf, cancel, &mut check)
+    }
+}
+
+/// Walks the search dimensions, calling `check` at each full combination.
+fn recurse(
+    dims: &[Dim],
+    depth: usize,
+    buf: &mut [u16],
+    cancel: &Arc<AtomicBool>,
+    check: &mut impl FnMut(&[u16]) -> Option<Found>,
+) -> Option<Found> {
+    if depth == dims.len() {
+        return check(buf);
+    }
+    if cancel.load(Ordering::Relaxed) {
+        return None;
+    }
+    match &dims[depth] {
+        Dim::Free(pos) => {
+            for w in 0..2048u16 {
+                buf[*pos] = w;
+                if let Some(f) = recurse(dims, depth + 1, buf, cancel, check) {
+                    return Some(f);
                 }
-                None
-            }
-            Mode::Swap => {
-                for pos in 0..buf.len().saturating_sub(1) {
-                    if cancel.load(Ordering::Relaxed) {
-                        return None;
-                    }
-                    buf.swap(pos, pos + 1);
-                    if let Some(f) = check(&buf) {
-                        return Some(f);
-                    }
-                    buf.swap(pos, pos + 1);
+                if cancel.load(Ordering::Relaxed) {
+                    return None;
                 }
-                None
+            }
+        }
+        Dim::Swap(positions, orderings) => {
+            for order in orderings {
+                for (slot, &val) in positions.iter().zip(order) {
+                    buf[*slot] = val;
+                }
+                if let Some(f) = recurse(dims, depth + 1, buf, cancel, check) {
+                    return Some(f);
+                }
+                if cancel.load(Ordering::Relaxed) {
+                    return None;
+                }
             }
         }
     }
+    None
+}
 
-    /// Recursively fills the blank positions with every combination.
-    fn fill_blanks(
-        &self,
-        buf: &mut [u16],
-        blanks: &[usize],
-        depth: usize,
-        cancel: &Arc<AtomicBool>,
-        check: &mut impl FnMut(&[u16]) -> Option<Found>,
-    ) -> Option<Found> {
-        if depth == blanks.len() {
-            return check(buf);
-        }
-        for w in 0..2048u16 {
-            if cancel.load(Ordering::Relaxed) {
-                return None;
+/// The search dimensions of a run, used only inside [`Plan::run`].
+enum Dim {
+    Free(usize),
+    Swap(Vec<usize>, Vec<Vec<u16>>),
+}
+
+/// Every ordering of a slice. Heap's algorithm; fine for the small runs a
+/// human marks by hand (the size cap keeps a run's factorial in check).
+fn permutations(items: &[u16]) -> Vec<Vec<u16>> {
+    let mut result = Vec::new();
+    let mut a = items.to_vec();
+    let n = a.len();
+    let mut c = vec![0usize; n];
+    result.push(a.clone());
+    let mut i = 0;
+    while i < n {
+        if c[i] < i {
+            if i % 2 == 0 {
+                a.swap(0, i);
+            } else {
+                a.swap(c[i], i);
             }
-            buf[blanks[depth]] = w;
-            if let Some(f) = self.fill_blanks(buf, blanks, depth + 1, cancel, check) {
-                return Some(f);
-            }
+            result.push(a.clone());
+            c[i] += 1;
+            i = 0;
+        } else {
+            c[i] = 0;
+            i += 1;
         }
-        None
     }
+    result
+}
+
+/// Seconds a search of `candidates` mnemonics is expected to take.
+///
+/// The checksum-fail path is a single SHA-256; the fraction that pass add
+/// PBKDF2 and derivation. Both measured on an M1, and the estimate is
+/// deliberately high — better to promise ten minutes and finish in two.
+pub fn estimate_secs(candidates: u64, wc: WordCount) -> f64 {
+    const CHEAP_PER: f64 = 0.09e-6;
+    const DERIVE_PER: f64 = 2.5e-3;
+    let total = candidates as f64;
+    let pass_fraction = 1.0 / 2f64.powi(wc.checksum_bits() as i32);
+    total * CHEAP_PER + total * pass_fraction * DERIVE_PER
 }
 
 /// Per-run derivation state, so the candidate loop allocates nothing.
@@ -288,9 +336,9 @@ struct Engine<'p> {
     mnemonic: String,
     seed: [u8; 64],
     buf: [u8; 37],
-    /// Which BIP purposes to try: only the one that matches the target's script
-    /// kind, since a P2WPKH address can never come from a P2PKH derivation.
-    purposes: Vec<(u32, usize)>,
+    /// Only the BIP purpose whose script kind matches the target — a P2WPKH
+    /// address can never come from a P2PKH derivation.
+    purposes: Vec<u32>,
 }
 
 /// BIP-44/49/84 purposes paired with the script kind each produces.
@@ -298,12 +346,10 @@ const PURPOSES: [(u32, Kind); 3] = [(44, Kind::P2pkh), (49, Kind::P2sh), (84, Ki
 
 impl<'p> Engine<'p> {
     fn new(plan: &'p Plan) -> Engine<'p> {
-        // Only the purpose whose script kind matches the target can produce it.
         let purposes = PURPOSES
             .iter()
-            .enumerate()
-            .filter(|(_, (_, kind))| *kind == plan.target_kind)
-            .map(|(i, (purpose, _))| (*purpose, i))
+            .filter(|(_, kind)| *kind == plan.target_kind)
+            .map(|(purpose, _)| *purpose)
             .collect();
         Engine {
             plan,
@@ -318,7 +364,6 @@ impl<'p> Engine<'p> {
 
     /// Checks one candidate: checksum first, then derivation, then the address.
     fn try_candidate(&mut self, indices: &[u16]) -> Option<Found> {
-        // The checksum throws out all but one candidate in 16..256, cheaply.
         indices_to_entropy(indices, self.plan.word_count)?;
 
         self.mnemonic.clear();
@@ -333,7 +378,7 @@ impl<'p> Engine<'p> {
         self.pbkdf2.seed(&self.mnemonic, "", &mut self.seed);
         let master = Node::master(&self.seed)?;
 
-        for &(purpose, _) in &self.purposes {
+        for &purpose in &self.purposes {
             let chain = match external_chain(&self.secp, &master, purpose, &mut self.buf) {
                 Some(c) => c,
                 None => continue,
@@ -347,7 +392,7 @@ impl<'p> Engine<'p> {
                 if hashes[self.plan.target_kind as usize] == self.plan.target {
                     return Some(Found {
                         mnemonic: self.mnemonic.clone(),
-                        address: self.plan.target_str_readable(),
+                        address: crate::address::encode(self.plan.target_kind, &self.plan.target),
                         path: format!("m/{purpose}'/0'/0'/0/{i}"),
                     });
                 }
@@ -357,137 +402,125 @@ impl<'p> Engine<'p> {
     }
 }
 
-impl Plan {
-    fn target_str_readable(&self) -> String {
-        crate::address::encode(self.target_kind, &self.target)
-    }
-}
-
-/// A crude but honest reading of the search space, for the warning text.
-pub fn describe_space(plan: &Plan) -> String {
-    let n = plan.candidate_count();
-    let kind = match plan.mode {
-        Mode::Missing => "fehlende Wörter",
-        Mode::Typo => "ein falsches Wort",
-        Mode::Swap => "zwei vertauschte Nachbarn",
-    };
-    format!(
-        "{kind}: {} Kombinationen zu prüfen",
-        crate::util::group_digits(n)
-    )
-}
+/// Type alias so [`crate::recover_ui`] can hold a search result channel.
+pub type ResultRx = Receiver<Option<Found>>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bip39::{entropy_to_mnemonic, indices_to_entropy};
+    use crate::bip39::{entropy_to_mnemonic, word_index};
 
-    /// A known 12-word vector: all zero entropy is "abandon" eleven times then
-    /// "about". Recovering its last word from a blank must return it.
-    fn abandon_12() -> Vec<u16> {
-        let entropy = [0u8; 16];
+    fn abandon_words() -> Vec<String> {
         let mut m = String::new();
-        entropy_to_mnemonic(&entropy, WordCount::W12, &mut m);
-        m.split_whitespace()
-            .map(|w| word_index(w).unwrap())
-            .collect()
+        entropy_to_mnemonic(&[0u8; 16], WordCount::W12, &mut m);
+        m.split_whitespace().map(str::to_string).collect()
     }
 
-    /// The address that seed produces at m/84'/0'/0'/0/0, so the recovery has
-    /// a real target to hit.
-    fn target_for(indices: &[u16]) -> String {
-        let entropy = indices_to_entropy(indices, WordCount::W12).unwrap();
-        let mut m = String::new();
-        entropy_to_mnemonic(&entropy, WordCount::W12, &mut m);
-        let mut pb = Pbkdf2Ctx::new();
-        let mut seed = [0u8; 64];
-        pb.seed(&m, "", &mut seed);
-        let secp = secp256k1::Secp256k1::signing_only();
-        let master = Node::master(&seed).unwrap();
-        let mut buf = [0u8; 37];
-        let chain = external_chain(&secp, &master, 84, &mut buf).unwrap();
-        let pk = chain.child_pubkey(&secp, 0, &mut buf).unwrap();
-        let hashes = script_hashes(&pk);
-        crate::address::encode(Kind::P2wpkh, &hashes[Kind::P2wpkh as usize])
+    /// The address of that seed at m/84'/0'/0'/0/0.
+    const TARGET: &str = "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu";
+
+    fn run(layout: Layout) -> Option<Found> {
+        let plan = Plan::new(layout, TARGET, 2).unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let counter = Arc::new(AtomicU64::new(0));
+        plan.run(&cancel, &counter)
     }
 
     #[test]
-    fn recovers_a_missing_last_word() {
-        let full = abandon_12();
-        let target = target_for(&full);
-
-        let mut words: Vec<String> = full
-            .iter()
-            .map(|&i| wordlist()[i as usize].to_string())
-            .collect();
-        *words.last_mut().unwrap() = "?".into();
-
-        let plan = Plan::new(&words.join(" "), &target, Mode::Missing, 2).unwrap();
-        let cancel = Arc::new(AtomicBool::new(false));
-        let counter = Arc::new(AtomicU64::new(0));
-        let found = plan.run(&cancel, &counter).expect("word not recovered");
-        assert_eq!(found.mnemonic.split_whitespace().last().unwrap(), "about");
+    fn recovers_an_unknown_word() {
+        let mut words = abandon_words();
+        let mut states = vec![State::Sure; 12];
+        words[11].clear(); // last word gone
+        states[11] = State::Unsure;
+        let f = run(Layout::build(&words, &states).unwrap()).expect("not found");
+        assert_eq!(f.mnemonic.split_whitespace().last().unwrap(), "about");
     }
 
     #[test]
-    fn recovers_a_typo() {
-        let full = abandon_12();
-        let target = target_for(&full);
-        let mut words: Vec<String> = full
-            .iter()
-            .map(|&i| wordlist()[i as usize].to_string())
-            .collect();
-        // Break the third word.
-        words[2] = "zebra".into();
-
-        let plan = Plan::new(&words.join(" "), &target, Mode::Typo, 2).unwrap();
-        let cancel = Arc::new(AtomicBool::new(false));
-        let counter = Arc::new(AtomicU64::new(0));
-        assert!(plan.run(&cancel, &counter).is_some(), "typo not corrected");
+    fn recovers_an_unsure_word() {
+        let mut words = abandon_words();
+        let mut states = vec![State::Sure; 12];
+        words[2] = "zebra".into(); // wrong word, but present
+        states[2] = State::Unsure;
+        assert!(run(Layout::build(&words, &states).unwrap()).is_some());
     }
 
     #[test]
     fn recovers_a_swap() {
-        let full = abandon_12();
-        let target = target_for(&full);
-        let mut words: Vec<String> = full
-            .iter()
-            .map(|&i| wordlist()[i as usize].to_string())
-            .collect();
+        let mut words = abandon_words();
         words.swap(4, 5);
-
-        let plan = Plan::new(&words.join(" "), &target, Mode::Swap, 2).unwrap();
-        let cancel = Arc::new(AtomicBool::new(false));
-        let counter = Arc::new(AtomicU64::new(0));
-        assert!(plan.run(&cancel, &counter).is_some(), "swap not undone");
+        let mut states = vec![State::Sure; 12];
+        states[4] = State::Moved;
+        states[5] = State::Moved;
+        assert!(run(Layout::build(&words, &states).unwrap()).is_some());
     }
 
-    fn err_of(r: Result<Plan, String>) -> String {
-        match r {
-            Ok(_) => panic!("expected an error"),
+    #[test]
+    fn counts_combine() {
+        let words = abandon_words();
+        let mut states = vec![State::Sure; 12];
+        states[0] = State::Unsure; // 2048 (leer)
+        states[3] = State::Unsure; // 2048
+        states[6] = State::Moved;
+        states[7] = State::Moved; // 2! = 2
+        let layout = Layout::build(&words, &states).unwrap();
+        assert_eq!(layout.candidate_count(), 2048u64 * 2048 * 2);
+    }
+
+    #[test]
+    fn a_single_moved_word_does_nothing() {
+        let words = abandon_words();
+        let mut states = vec![State::Sure; 12];
+        states[3] = State::Moved; // isolated: no run, no effect
+        let layout = Layout::build(&words, &states).unwrap();
+        assert!(layout.is_trivial());
+    }
+
+    #[test]
+    fn a_complete_seed_has_nothing_to_search() {
+        let layout = Layout::build(&abandon_words(), &[State::Sure; 12]).unwrap();
+        assert!(layout.is_trivial());
+        let err = match Plan::new(layout, TARGET, 2) {
             Err(e) => e,
-        }
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(err.contains("nichts zu suchen"), "{err}");
     }
 
     #[test]
-    fn wrong_length_is_rejected() {
-        let e = err_of(Plan::new("abandon abandon", "bc1qxyz", Mode::Missing, 2));
-        assert!(e.contains("Wörter"), "{e}");
+    fn an_oversized_space_is_refused() {
+        let words = abandon_words();
+        let states = vec![State::Unsure; 12]; // 2048^12, absurd
+        let layout = Layout::build(&words, &states).unwrap();
+        let err = match Plan::new(layout, TARGET, 2) {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(err.contains("zu groß"), "{err}");
     }
 
     #[test]
-    fn counts_the_space() {
-        let words =
-            "? ? abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        // Two blanks, before checksum: 2048 squared.
-        let plan = Plan::new(words, &target_for(&abandon_12()), Mode::Missing, 2).unwrap();
-        assert_eq!(plan.candidate_count(), 2048 * 2048);
-    }
-
-    #[test]
-    fn unknown_word_is_named() {
-        let words = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon zzzznotaword";
-        let e = err_of(Plan::new(words, "bc1qxyz", Mode::Missing, 2));
+    fn a_bad_word_is_named() {
+        let mut words = abandon_words();
+        words[5] = "zzzznotaword".into();
+        let states = vec![State::Sure; 12];
+        let e = match Layout::build(&words, &states) {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
         assert!(e.contains("BIP-39"), "{e}");
+    }
+
+    #[test]
+    fn permutations_are_complete() {
+        let p = permutations(&[1, 2, 3]);
+        assert_eq!(p.len(), 6);
+        let unique: std::collections::HashSet<_> = p.into_iter().collect();
+        assert_eq!(unique.len(), 6);
+    }
+
+    #[test]
+    fn word_index_still_resolves() {
+        assert_eq!(word_index("about"), word_index("abou")); // 4-letter stub
     }
 }

@@ -126,17 +126,18 @@ enum Command {
     InitConfig,
     /// Prove the Bloom filter and on-disk lookup actually find a planted seed.
     VerifyLookup,
-    /// Recover YOUR OWN seed when a word is missing, wrong, or swapped.
+    /// Recover YOUR OWN seed. `?` marks an unknown word, `*` a doubtful one.
+    ///
+    /// The window (Seed retten) is friendlier for anything beyond a missing
+    /// word; this covers the common cases from a script.
     Recover {
-        /// The words you have, with `?` for each one you are missing.
+        /// The words in order. `?` for an unknown word, `word*` for one that
+        /// might be wrong — e.g. "legal winner ? year wave*".
         #[arg(long)]
         words: String,
         /// An address the wallet is known to own — the search target.
         #[arg(long)]
         address: String,
-        /// missing | typo | swap. What went wrong with the seed.
-        #[arg(long, default_value = "missing")]
-        mode: String,
         /// Addresses to derive per path before moving on. Raise it if the
         /// wallet used addresses past the first.
         #[arg(long, default_value_t = 20)]
@@ -295,10 +296,9 @@ fn dispatch(cli: Cli) -> Result<(), String> {
         Some(Command::Recover {
             words,
             address,
-            mode,
             depth,
             yes,
-        }) => run_recover(words, address, mode, *depth, *yes),
+        }) => run_recover(words, address, *depth, *yes),
         None => {
             let cfg = load_config(&cli)?;
             if cli.test_persistence {
@@ -497,40 +497,41 @@ fn test_alert(cfg: &Config) -> Result<(), String> {
 /// Proves the two-stage lookup actually finds a known planted address.
 /// Recovery of the user's own seed. Prints a warning, an estimate, and asks
 /// for a typed confirmation before it touches the wallet.
-fn run_recover(
-    words: &str,
-    address: &str,
-    mode: &str,
-    depth: u32,
-    yes: bool,
-) -> Result<(), String> {
-    use schatzsuche::recover::{describe_space, Mode, Plan};
+fn run_recover(words: &str, address: &str, depth: u32, yes: bool) -> Result<(), String> {
+    use schatzsuche::recover::{Layout, Plan, State};
     use std::io::Write as _;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
 
-    let mode = match mode {
-        "missing" => Mode::Missing,
-        "typo" => Mode::Typo,
-        "swap" => Mode::Swap,
-        other => {
-            return Err(format!(
-                "--mode ist missing, typo oder swap, nicht „{other}“"
-            ))
+    // Parse the marker syntax: `?` is an unknown word, a trailing `*` a
+    // doubtful one, anything else a sure word.
+    let mut ws = Vec::new();
+    let mut sts = Vec::new();
+    for tok in words.split_whitespace() {
+        if tok == "?" {
+            ws.push(String::new());
+            sts.push(State::Unsure);
+        } else if let Some(stem) = tok.strip_suffix('*') {
+            ws.push(stem.to_string());
+            sts.push(State::Unsure);
+        } else {
+            ws.push(tok.to_string());
+            sts.push(State::Sure);
         }
-    };
+    }
 
-    let plan = Plan::new(words, address, mode, depth)?;
-
-    // A rough per-candidate cost: the checksum-fail path is a SHA-256, the
-    // pass path adds PBKDF2 and derivation. Measured on an M1; an over-estimate
-    // elsewhere, which is the safe direction for a promise about time.
+    let layout = Layout::build(&ws, &sts)?;
+    let candidates = layout.candidate_count();
+    let plan = Plan::new(layout, address, depth)?;
     let secs = plan.estimate_secs();
 
     println!();
     println!("  WIEDERHERSTELLUNG DER EIGENEN SEED");
     println!("  ----------------------------------");
-    println!("  {}", describe_space(&plan));
+    println!(
+        "  {} Kombinationen zu prüfen",
+        util::group_digits(candidates)
+    );
     println!("  Geschätzte Dauer: {}", human_duration(secs));
     println!();
     println!("  Bitte lies das, bevor du fortfährst:");

@@ -127,16 +127,9 @@ impl GuiApp {
                 .and_then(|v| v.parse().ok()),
             expert_unlocked: std::env::var("SC_SHOT_SETTINGS").is_ok(),
             expert_prompt: false,
-            recover: std::env::var("SC_SHOT_RECOVER").ok().map(|v| {
-                let mut r = crate::recover_ui::RecoverUi::default();
-                if v == "filled" {
-                    r.words = "abandon abandon abandon abandon abandon abandon                                abandon abandon abandon abandon abandon ?"
-                        .into();
-                    r.address = "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu".into();
-                    r.acknowledged = true;
-                }
-                r
-            }),
+            recover: std::env::var("SC_SHOT_RECOVER")
+                .is_ok()
+                .then(crate::recover_ui::RecoverUi::default),
         }
     }
 
@@ -505,125 +498,160 @@ fn format_estimate(secs: f64) -> String {
 }
 
 /// One of the three damage-mode cards in the picker.
-fn mode_card(ui: &mut Ui, active: bool, title: &str, sub: &str) -> bool {
-    let (rect, resp) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 58.0), Sense::click());
-    let hovered = resp.hovered();
-    let p = ui.painter();
-    p.rect(
-        rect,
-        Rounding::same(8.0),
-        if active {
-            Color32::from_rgb(30, 46, 64)
-        } else if hovered {
-            Color32::from_rgb(28, 33, 46)
-        } else {
-            BG
-        },
-        Stroke::new(
-            if active { 1.6_f32 } else { 1.0 },
-            if active { PRIMARY } else { FRAME },
-        ),
-    );
-    // A filled dot when chosen, a ring when not — a radio button, in effect.
-    let dot = rect.left_center() + Vec2::new(20.0, 0.0);
-    if active {
-        p.circle_filled(dot, 7.0, PRIMARY);
-        p.circle_filled(dot, 3.0, Color32::BLACK);
-    } else {
-        p.circle_stroke(dot, 7.0, Stroke::new(1.4_f32, DIM));
+/// The colour that stands for a word state.
+fn state_colour(s: crate::recover::State, empty: bool) -> Color32 {
+    use crate::recover::State;
+    if empty {
+        return DIM; // an empty field is "unknown" whatever its state
     }
-    p.text(
-        rect.left_top() + Vec2::new(44.0, 11.0),
-        egui::Align2::LEFT_TOP,
-        title,
-        FontId::proportional(13.5),
-        TEXT,
-    );
-    p.text(
-        rect.left_top() + Vec2::new(44.0, 32.0),
-        egui::Align2::LEFT_TOP,
-        sub,
-        FontId::proportional(11.5),
-        DIM,
-    );
-    resp.clicked()
+    match s {
+        State::Sure => GREEN,
+        State::Unsure => WARN,
+        State::Moved => ACCENT,
+    }
 }
 
-/// The editing form: mode, words, address, live preview, warning, start.
+/// Short label for a word state, for the little button after each word.
+fn state_label(s: crate::recover::State, empty: bool) -> &'static str {
+    use crate::recover::State;
+    if empty {
+        return "fehlt";
+    }
+    match s {
+        State::Sure => "sicher",
+        State::Unsure => "unsicher",
+        State::Moved => "verrutscht",
+    }
+}
+
+/// One word field: number, text box, and a state chip that cycles on click.
+///
+/// An empty field is always "unknown" and its chip is inert — there is nothing
+/// to be sure or unsure about. A filled field cycles sure → unsure → moved.
+fn word_field(ui: &mut Ui, n: usize, slot: &mut crate::recover_ui::Slot) {
+    use crate::recover::State;
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            Vec2::new(22.0, 22.0),
+            egui::Label::new(
+                RichText::new(format!("{n:>2}"))
+                    .color(MUTED)
+                    .font(mono(12.0)),
+            ),
+        );
+        let empty = slot.word.trim().is_empty();
+        ui.add(
+            egui::TextEdit::singleline(&mut slot.word)
+                .desired_width(118.0)
+                .font(mono(12.5))
+                .text_color(if empty { DIM } else { TEXT }),
+        );
+        let colour = state_colour(slot.state, empty);
+        let chip = egui::Button::new(
+            RichText::new(state_label(slot.state, empty))
+                .color(colour)
+                .size(10.5),
+        )
+        .fill(Color32::from_rgba_unmultiplied(
+            colour.r(),
+            colour.g(),
+            colour.b(),
+            26,
+        ))
+        .stroke(Stroke::new(1.0_f32, colour))
+        .rounding(Rounding::same(9.0))
+        .min_size(Vec2::new(78.0, 20.0));
+        let resp = ui.add_enabled(!empty, chip);
+        if resp.clicked() {
+            slot.state = match slot.state {
+                State::Sure => State::Unsure,
+                State::Unsure => State::Moved,
+                State::Moved => State::Sure,
+            };
+        }
+    });
+}
+
+/// The editing form: length, word grid with per-word states, address,
+/// live preview, warning, start.
 fn recover_form(
     ui: &mut Ui,
     r: &mut crate::recover_ui::RecoverUi,
     _keep_open: &mut bool,
     depth: u32,
 ) {
-    use crate::recover::Mode;
     use crate::recover_ui::Preview;
 
     ui.add_space(4.0);
     ui.label(
         RichText::new(
-            "Dir fehlt ein Stück deiner eigenen Seed? Wenn du die meisten Wörter noch \
-             hast und eine Adresse der Wallet kennst, lässt sich der Rest oft ausrechnen.",
+            "Dir fehlt ein Stück deiner eigenen Seed? Trag ein, was du noch hast, und \
+             markiere hinter jedem Wort, wie sicher du dir bist. Den Rest rechnet das \
+             Programm aus.",
         )
         .color(DIM)
         .size(12.5),
     );
     ui.add_space(16.0);
 
-    // Step 1 — what went wrong.
-    step_badge(ui, 1, "Was ist passiert?");
+    // Step 1 — length.
+    step_badge(ui, 1, "Wie viele Wörter hat deine Seed?");
     ui.add_space(8.0);
-    let modes = [
-        (
-            Mode::Missing,
-            "Ein Wort fehlt",
-            "Du weißt nicht mehr, wie ein Wort hieß",
-        ),
-        (
-            Mode::Typo,
-            "Ein Wort ist falsch",
-            "Ein Wort stimmt nicht, du weißt aber nicht welches",
-        ),
-        (
-            Mode::Swap,
-            "Zwei Wörter vertauscht",
-            "Zwei benachbarte Wörter stehen in falscher Reihenfolge",
-        ),
-    ];
-    for (m, title, sub) in modes {
-        if mode_card(ui, r.mode == m, title, sub) {
-            r.mode = m;
+    ui.horizontal(|ui| {
+        for wc in crate::bip39::ALL_WORD_COUNTS {
+            let on = r.word_count == wc;
+            let btn = egui::Button::new(
+                RichText::new(format!("{}", wc.words()))
+                    .color(if on { Color32::BLACK } else { TEXT })
+                    .size(13.0)
+                    .strong(),
+            )
+            .fill(if on { PRIMARY } else { BG })
+            .stroke(Stroke::new(1.0_f32, FRAME))
+            .rounding(Rounding::same(7.0))
+            .min_size(Vec2::new(52.0, 30.0));
+            if ui.add(btn).clicked() {
+                r.resize(wc);
+            }
         }
-        ui.add_space(6.0);
-    }
+    });
 
-    ui.add_space(12.0);
+    ui.add_space(16.0);
 
-    // Step 2 — the words.
+    // Step 2 — the words, in a grid, each with its state chip.
     step_badge(ui, 2, "Deine Wörter");
-    ui.add_space(6.0);
-    let hint = match r.mode {
-        Mode::Missing => {
-            "Alle Wörter der Reihe nach. Für jedes fehlende Wort ein Fragezeichen (?)."
-        }
-        Mode::Typo => "Alle 12–24 Wörter, so wie du sie hast — samt dem falschen.",
-        Mode::Swap => "Alle Wörter in der Reihenfolge, die du hast.",
-    };
-    ui.label(RichText::new(hint).color(DIM).size(11.5));
-    ui.add_space(6.0);
-    ui.add(
-        egui::TextEdit::multiline(&mut r.words)
-            .desired_rows(3)
-            .desired_width(f32::INFINITY)
-            .hint_text(match r.mode {
-                Mode::Missing => "z. B.  legal winner thank ? ? … about",
-                _ => "z. B.  legal winner thank year wave …",
-            })
-            .font(mono(13.0)),
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new(
+            "Leer lassen, wo du ein Wort nicht mehr weißt. Der Knopf hinter jedem Wort \
+             sagt, wie sicher du dir bist — klick ihn, um zu wechseln.",
+        )
+        .color(DIM)
+        .size(11.5),
     );
+    ui.add_space(4.0);
+    recover_legend(ui);
+    ui.add_space(8.0);
 
-    ui.add_space(14.0);
+    // Two columns of word fields.
+    let half = r.word_count.words().div_ceil(2);
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            for i in 0..half {
+                word_field(ui, i + 1, &mut r.slots[i]);
+                ui.add_space(5.0);
+            }
+        });
+        ui.add_space(18.0);
+        ui.vertical(|ui| {
+            for i in half..r.word_count.words() {
+                word_field(ui, i + 1, &mut r.slots[i]);
+                ui.add_space(5.0);
+            }
+        });
+    });
+
+    ui.add_space(16.0);
 
     // Step 3 — the target.
     step_badge(ui, 3, "Eine Adresse deiner Wallet");
@@ -647,7 +675,7 @@ fn recover_form(
 
     // Live preview of the search space.
     match r.preview() {
-        Preview::Empty => {}
+        Preview::Nothing => {}
         Preview::Invalid(msg) => {
             recover_note(ui, WARN, &msg);
             ui.add_space(12.0);
@@ -723,24 +751,46 @@ fn recover_form(
         .rounding(Rounding::same(8.0))
         .min_size(Vec2::new(ui.available_width(), 40.0));
     if ui.add_enabled(ready, btn).clicked() {
+        // can_start already validated the plan; if it somehow fails, show the
+        // reason rather than panicking a search screen.
         if let Err(e) = r.start(depth) {
-            // Should not happen — can_start checked the plan — but never panic
-            // a search screen; show the reason instead.
-            r.words = format!("{}\n(Fehler: {e})", r.words);
+            r.phase = crate::recover_ui::Phase::Done(None);
+            eprintln!("recovery start failed: {e}");
         }
     }
     if !ready {
         ui.add_space(6.0);
-        let why = if !matches!(r.preview(), Preview::Ready { .. }) {
-            "Trag zuerst deine Wörter ein."
-        } else if r.address.trim().is_empty() {
-            "Es fehlt noch eine Adresse."
-        } else {
-            "Setz den Haken oben, dann geht es los."
+        let why = match r.preview() {
+            Preview::Nothing => {
+                "Markiere mindestens ein Wort als unbekannt, unsicher oder verrutscht."
+            }
+            Preview::Invalid(_) => "Ein Wort stimmt noch nicht — siehe Hinweis oben.",
+            Preview::Ready { .. } if r.address.trim().is_empty() => "Es fehlt noch eine Adresse.",
+            Preview::Ready { .. } => "Setz den Haken oben, dann geht es los.",
         };
         ui.label(RichText::new(why).color(MUTED).size(11.5));
     }
     ui.add_space(20.0);
+}
+
+/// The legend that explains the four word states by colour.
+fn recover_legend(ui: &mut Ui) {
+    let items = [
+        (GREEN, "sicher", "stimmt"),
+        (WARN, "unsicher", "evtl. falsch"),
+        (ACCENT, "verrutscht", "Reihenfolge unklar"),
+        (DIM, "leer", "= fehlt"),
+    ];
+    ui.horizontal_wrapped(|ui| {
+        for (colour, name, meaning) in items {
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(9.0), Sense::hover());
+            ui.painter().circle_filled(rect.center(), 4.0, colour);
+            ui.add_space(2.0);
+            ui.label(RichText::new(name).color(colour).size(10.5).strong());
+            ui.label(RichText::new(meaning).color(MUTED).size(10.5));
+            ui.add_space(10.0);
+        }
+    });
 }
 
 /// A one-line coloured note with a leading glyph.
@@ -947,10 +997,9 @@ fn recover_done(ui: &mut Ui, r: &mut crate::recover_ui::RecoverUi, _keep_open: &
             )
             .clicked()
         {
-            r.words.clear();
-            r.address.clear();
-            r.acknowledged = false;
-            r.phase = crate::recover_ui::Phase::Editing;
+            let wc = r.word_count;
+            *r = crate::recover_ui::RecoverUi::default();
+            r.resize(wc);
         }
     });
     ui.add_space(20.0);

@@ -253,29 +253,36 @@ wiederherstellst — du hast die meisten Wörter, dir fehlt nur ein Teil —, is
 der Raum klein genug, dass ein Treffer nicht nur möglich, sondern wahrscheinlich
 ist.
 
-Drei Fälle:
+**Am einfachsten im Fenster:** Knopf **„Seed retten"**. Dort wählst du die
+Wortanzahl, trägst deine Wörter in einzelne Felder ein und markierst hinter
+jedem Wort, wie sicher du dir bist:
 
-| Was passiert ist | `--mode` | Beispiel-Suchraum |
+| Markierung | Bedeutung | Suchaufwand |
 | --- | --- | --- |
-| Ein Wort fehlt (mit `?` markiert) | `missing` | 2048 je Lücke |
-| Ein Wort ist vertippt, Position unbekannt | `typo` | 24 × 2048 ≈ 49 000 |
-| Zwei benachbarte Wörter vertauscht | `swap` | ein paar Dutzend |
+| **sicher** (grün) | Wort stimmt | keiner |
+| leer / **unsicher** (gelb) | Wort fehlt oder könnte falsch sein | 2048 je Wort |
+| **verrutscht** (violett) | Reihenfolge unklar | k! je zusammenhängender Gruppe |
+
+Die Markierungen lassen sich **kombinieren** — zwei fehlende Wörter und ein
+vertauschtes Paar sind eine einzige Suche. Unter den Feldern steht live, wie
+groß der Raum ist und wie lange es schätzungsweise dauert. Ist der Raum zu
+groß, sagt das Programm es, statt eine aussichtslose Suche zu starten.
+
+Fürs Terminal gibt es dasselbe kompakter — `?` für ein fehlendes Wort, ein
+angehängtes `*` für ein unsicheres:
 
 ```bash
 schatzsuche recover \
-  --words "zoo abandon ? ... about" \
-  --address bc1q... \
-  --mode missing
+  --words "zoo abandon ? year wave* … about" \
+  --address bc1q…
 ```
 
-Das Programm rechnet zuerst den Suchraum und die geschätzte Dauer aus, zeigt
-eine **Warnung** und fragt nach einer ausdrücklichen Bestätigung, bevor es
-loslegt.
+Beide Wege rechnen zuerst Suchraum und Dauer aus, zeigen eine **Warnung** und
+verlangen eine ausdrückliche Bestätigung, bevor sie loslegen.
 
 Ein bewusst *nicht* angebotener Fall ist die freie Umsortierung aller Wörter:
 24 Wörter lassen sich 6·10²³-fach anordnen — das ist wieder Collider-Gebiet,
-und so zu tun, als ginge das, wäre genau die Unehrlichkeit, gegen die dieses
-Programm argumentiert.
+und die eingebaute Obergrenze lehnt es ab.
 
 **Sicherheit:** Für das Prüfen des Kontostands und das spätere Benutzen der
 Seed muss der Rechner am Netz sein — ein Risiko, das die Warnung ausspricht.
