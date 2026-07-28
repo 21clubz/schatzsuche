@@ -8,8 +8,15 @@ jeden die BIP-44/49/84-Adressen ab und prüft sie gegen eine lokale Liste von
 Adressen mit Guthaben. Dann rechnet es aus, wie lange ein Treffer dauern würde,
 und zeigt das Ergebnis in **Vielfachen des Alters des Universums** an.
 
-Auf einem Apple M1 sind das rund 10¹⁹ Universumsalter. Diese Zahl ist der Punkt
-des Programms.
+Auf einem Apple M1 sind das rund 10¹⁹ Universumsalter — mit den Voreinstellungen
+und einer Datenbank aus 5 Mio. Adressen. Diese Zahl ist der Punkt des Programms.
+
+Sie hängt an der Größe der Datenbank: Mit einem echten Dump in der Größenordnung
+von 50 Mio. Adressen wird sie zehnmal kleiner. Also 10¹⁸ statt 10¹⁹ Universen —
+ein Unterschied, den nur die Schreibweise sichtbar macht, und keiner, der etwas
+an der Aussage ändert.
+
+![Das Fenster von Schatzsuche: Tempo, geprüfte Wallets, abgesuchter Anteil des Schlüsselraums und die Hochrechnung in Vielfachen des Universumsalters.](docs/schatzsuche.png)
 
 > Es findet nichts. Nicht selten — nie. Wer etwas anderes verspricht, verkauft
 > dir etwas.
@@ -28,10 +35,40 @@ oder Wortlisten. Schatzsuche tut nichts davon und wird es nicht tun.
 Wer den Beweis will, findet ihn in `src/engine.rs`: Entropie rein, nichts
 dazwischen.
 
+### Und wenn doch etwas gefunden wird?
+
+Wird es nicht — dafür steht die Zahl oben. Aber falls jemand eine echte
+Adressdatenbank benutzt und das Unmögliche eintritt: Das Guthaben hinter einer
+gefundenen Adresse gehört jemand anderem. Es auszugeben ist Diebstahl, egal wie
+der Schlüssel zustande kam. Das Programm schreibt einen Treffer ausschließlich
+auf die eigene Festplatte und schickt ihn nirgendwohin — was danach damit
+geschieht, ist keine technische Frage mehr.
+
 ## Installation
 
 Fertige Programme für macOS, Linux und Windows liegen unter
-[Releases](../../releases). Herunterladen, entpacken, starten.
+[Releases](../../releases). Im Mac-Archiv liegt zusätzlich `Schatzsuche.app`
+zum Doppelklicken.
+
+**Beim ersten Start meldet sich das Betriebssystem zu Wort.** Die Programme sind
+nicht signiert — das bräuchte ein kostenpflichtiges Entwicklerkonto bei Apple
+beziehungsweise ein Zertifikat für Windows:
+
+* **macOS** verweigert den ersten Start. Danach unter *Systemeinstellungen →
+  Datenschutz & Sicherheit* auf **„Dennoch öffnen"** klicken. Oder vorher im
+  Terminal die Quarantäne-Markierung entfernen:
+
+  ```bash
+  xattr -dr com.apple.quarantine Schatzsuche.app
+  ```
+
+* **Windows** zeigt einen SmartScreen-Hinweis: *Weitere Informationen →
+  Trotzdem ausführen*.
+
+* **Virenscanner schlagen womöglich an.** Ein Programm, das im Sekundentakt
+  Wallet-Schlüssel erzeugt, sieht für eine Heuristik aus wie ein Wallet-Dieb.
+  Wem das zu heikel ist: Der Quelltext liegt vollständig hier, und selbst bauen
+  dauert eine Minute.
 
 Selbst bauen:
 
@@ -49,6 +86,13 @@ mehr Tempo, dafür läuft die Datei nur auf dieser CPU-Generation:
 
 ```bash
 RUSTFLAGS="-C target-cpu=native" cargo build --release
+```
+
+Das Mac-App-Bundle aus einem eigenen Build — nötig, damit der Doppelklick ein
+Fenster öffnet statt eines Terminals:
+
+```bash
+scripts/make-macos-app.sh target/release/schatzsuche dist
 ```
 
 Unter Linux werden dafür die GUI-Bibliotheken gebraucht:
@@ -228,7 +272,7 @@ Gemessen gegen 5 Mio. Einträge: 2 Fehlalarme auf 2,39 Mio. Abfragen (8,4e-7) be
 cargo test --release
 ```
 
-92 Tests. Die tragenden:
+94 Tests. Die tragenden:
 
 * BIP-39/32/44/49/84-Ableitung gegen die Referenzbibliotheken `bitcoin` und
   `bip39` über zufällige Seeds, plus die veröffentlichten Testvektoren.
