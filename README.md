@@ -39,6 +39,11 @@ Selbst bauen:
 cargo build --release
 ```
 
+Getestet wurde gegen **Linux x86-64** und **Windows x86-64** per
+Cross-Kompilierung mit Zig; beide Binaries entstehen fehlerfrei. Jeder Commit
+wird zusätzlich auf echten Linux-, macOS- und Windows-Rechnern gebaut und
+getestet.
+
 Auf dem eigenen Rechner lohnt sich der Prozessor-spezifische Build — rund 13 %
 mehr Tempo, dafür läuft die Datei nur auf dieser CPU-Generation:
 
@@ -123,6 +128,12 @@ tauscht Filtergenauigkeit direkt gegen Arbeitsspeicher.
 
 Die Priorität wirkt unter macOS und Linux. Windows kennt die Einstellung
 derzeit nicht; die Oberfläche sagt das, statt es zu verschweigen.
+
+**Windows ist langsamer.** Die handgeschriebene SHA-512-Kompression aus
+`sha2-asm` — auf Apple-Silicon rund 40 % des Gesamtdurchsatzes — unterstützt
+Windows nicht; das Paket bricht den Build ab, statt zurückzufallen. Dort läuft
+PBKDF2 mit der portablen Implementierung. Gemessener Unterschied auf einem M1:
+1400 gegen 1020 Seeds/s bei sonst gleichen Bedingungen.
 
 ## Wohin ein Treffer geht
 
