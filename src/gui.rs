@@ -258,6 +258,10 @@ fn handle_link(ui: &mut Ui, size: f32) {
     resp.on_hover_text(HANDLE_URL);
 }
 
+/// What to call the machine in the window's texts: „Mac", „PC" or „Rechner",
+/// fixed at compile time for the platform this build targets.
+const NOUN: &str = crate::machine::noun();
+
 /// Vertical space a [`card`] spends on itself before any content: both inner
 /// margins, the title line, the gap under it, and the stroke on both edges.
 /// Callers that hand a card an exact height have to subtract it.
@@ -465,7 +469,6 @@ impl eframe::App for GuiApp {
             self.draw_dashboard(ctx);
         }
 
-        self.draw_settings(ctx);
         self.handle_screenshot(ctx);
     }
 }
@@ -632,6 +635,13 @@ impl GuiApp {
                     });
                 });
             });
+
+        // Between the bars and the content on purpose. egui hands each panel
+        // the space left by the ones before it, so a settings drawer opened
+        // after the dashboard would be painted straight over it — the right
+        // column was being sliced through the middle of a word. Here it sits
+        // under the header, and the cards reflow into what remains.
+        self.draw_settings(ctx);
 
         egui::CentralPanel::default()
             .frame(
@@ -868,7 +878,8 @@ impl GuiApp {
                 ui.add_space(8.0);
                 ui.label(
                     RichText::new(format!(
-                        "Selbst wenn dieser Mac seit dem Urknall durchgehend rechnete, hätte er erst {} % davon geschafft.",
+                        "Selbst wenn {} seit dem Urknall durchgehend rechnete, hätte er erst {} % davon geschafft.",
+                        crate::machine::this_machine(),
                         sci(100.0 / ages)
                     ))
                     .color(TEXT)
@@ -1064,7 +1075,8 @@ impl GuiApp {
         if !self.settings_open {
             return;
         }
-        let max_cores = physical_cores().max(1);
+        let machine = crate::machine::Machine::detect();
+        let max_cores = machine.max_threads();
 
         egui::SidePanel::right("settings")
             .resizable(false)
@@ -1108,28 +1120,44 @@ impl GuiApp {
                         .color(DIM)
                         .size(12.0),
                 );
+                ui.add_space(4.0);
+                // What the hardware said, so the preset numbers below are not a
+                // mystery: on this machine they are these numbers and nowhere
+                // else the same.
+                ui.label(RichText::new(machine.describe()).color(PRIMARY).size(11.5));
                 ui.add_space(10.0);
 
                 // Presets carry the measured trade-off in their labels, so the
-                // choice does not require reading a benchmark first.
+                // choice does not require reading a benchmark first. Every
+                // count comes from the machine, not from the machine this was
+                // written on.
+                let quiet_hint = if machine.efficiency > 0 {
+                    format!("Nur Effizienzkerne, {} bleibt kühl und leise", NOUN)
+                } else {
+                    format!("Wenige Kerne, gedrosselt — {NOUN} bleibt kühl und leise")
+                };
                 let presets = [
                     (
                         "Sparsam",
-                        4usize,
+                        machine.economical_threads(),
                         Priority::Background,
-                        "Nur Effizienzkerne, Mac bleibt kühl und leise",
+                        quiet_hint,
                     ),
                     (
                         "Ausgewogen",
-                        4,
+                        machine.recommended_threads(),
                         Priority::Normal,
-                        "Empfohlen — halbe Kerne, volles Tempo darauf",
+                        if machine.efficiency > 0 {
+                            "Empfohlen — die schnellen Kerne, volles Tempo darauf".to_string()
+                        } else {
+                            "Empfohlen — halbe Kerne, volles Tempo darauf".to_string()
+                        },
                     ),
                     (
                         "Maximum",
                         max_cores,
                         Priority::Normal,
-                        "Alle Kerne, Mac wird warm und lauter",
+                        format!("Alle Kerne, {NOUN} wird warm und lauter"),
                     ),
                 ];
                 for (name, t, prio, hint) in presets {
@@ -1298,19 +1326,19 @@ impl GuiApp {
                 .show(ctx, |ui| {
                     ui.set_max_width(430.0);
                     ui.label(
-                        RichText::new("Diese Regler können deinen Mac stark belasten.")
+                        RichText::new(format!("Diese Regler können deinen {NOUN} stark belasten."))
                             .color(WARN)
                             .size(14.0)
                             .strong(),
                     );
                     ui.add_space(8.0);
                     ui.label(
-                        RichText::new(
+                        RichText::new(format!(
                             "Alle Kerne auf voller Priorität heißt: dauerhaft 100 % Auslastung, \
                              spürbare Wärme, lauter Lüfter und bei einem Laptop deutlich kürzere \
-                             Akkulaufzeit. Schaden nimmt der Mac nicht — er drosselt sich selbst, \
-                             bevor etwas passiert — aber angenehm ist es nicht.",
-                        )
+                             Akkulaufzeit. Schaden nimmt der {NOUN} nicht — er drosselt sich \
+                             selbst, bevor etwas passiert — aber angenehm ist es nicht.",
+                        ))
                         .color(TEXT)
                         .size(12.5),
                     );

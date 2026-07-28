@@ -741,9 +741,19 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
             progress.funded(),
             progress.bloom_bytes() as f64 / 1e6
         );
+        let machine = schatzsuche::machine::Machine::detect();
+        println!(
+            "  Maschine   : {}{}",
+            machine.describe(),
+            if cfg.run.threads == 0 {
+                format!(" → {threads} Arbeiter automatisch")
+            } else {
+                String::new()
+            }
+        );
         println!(
             "  Arbeiter   : {threads} aktiv von {} Kernen, Priorität {}",
-            schatzsuche::config::physical_cores(),
+            machine.max_threads(),
             Priority::from_u8(cfg.run.priority).label()
         );
         println!(

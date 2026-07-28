@@ -31,7 +31,7 @@ pub struct Run {
     pub word_count: u8,
     /// Addresses derived per derivation path, per seed.
     pub addresses_per_path: u32,
-    /// 0 means "one worker per physical core".
+    /// 0 means "ask the hardware" — see [`crate::machine::Machine`].
     pub threads: usize,
     /// Scheduling priority: 0 background, 1 utility, 2 normal.
     ///
@@ -45,10 +45,10 @@ impl Default for Run {
         Run {
             word_count: 24,
             addresses_per_path: 20,
-            // Measured on an idle M1: four cores at normal priority give 72%
-            // of peak while leaving half the machine free. The remaining four
-            // buy 38% more for double the active silicon.
-            threads: 4,
+            // Not a number: a fixed four was measured on an eight-core M1,
+            // where it is exactly right, and is the entire machine on a dual
+            // core laptop. Zero means the hardware decides at startup.
+            threads: 0,
             priority: 2,
         }
     }
@@ -67,7 +67,7 @@ impl Run {
         if self.threads > 0 {
             return self.threads.min(physical_cores());
         }
-        physical_cores()
+        crate::machine::Machine::detect().recommended_threads()
     }
 }
 
@@ -276,6 +276,11 @@ impl Config {
 # never the mnemonic — those services run on infrastructure you do not control.
 #
 # Enable at least one alert channel and verify it with `--test-alert`.
+#
+# run.threads = 0 means the hardware decides: the performance cores on a
+# machine that has separate fast and slow ones, half the cores otherwise. Set a
+# number here to override that permanently; the interface can also change it
+# while the search runs, without restarting.
 
 ";
         write_owner_only(path, &format!("{header}{text}"))

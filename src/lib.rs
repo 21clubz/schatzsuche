@@ -21,6 +21,7 @@ pub mod gui;
 pub mod hits;
 pub mod icon_data;
 pub mod lookup;
+pub mod machine;
 pub mod startup;
 pub mod stats;
 pub mod tui;

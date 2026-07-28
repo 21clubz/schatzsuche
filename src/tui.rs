@@ -920,7 +920,8 @@ fn draw_verdict(f: &mut Frame, area: Rect, app: &App, rate: f64, roomy: bool) {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             format!(
-                "Selbst wenn dieser Mac seit dem Urknall durchgehend rechnete, hätte er erst {} % davon geschafft.",
+                "Selbst wenn {} seit dem Urknall durchgehend rechnete, hätte er erst {} % davon geschafft.",
+                crate::machine::this_machine(),
                 sci(after_one_age)
             ),
             Style::default().fg(C_TEXT),

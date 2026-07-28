@@ -133,6 +133,23 @@ Ein ausgewählter Treffer zeigt seine Wörter nummeriert im rechten Feld.
 
 ## Leistung und Stromverbrauch
 
+**Das Programm sucht sich seine Einstellung selbst.** Beim Start liest es die
+Hardware aus und nimmt die schnelle Hälfte: auf Rechnern mit getrennten
+schnellen und sparsamen Kernen genau die schnellen, sonst die Hälfte aller
+Kerne. Ein Achtkern-Mac arbeitet also mit vier Kernen, ein Zweikern-Laptop mit
+einem, ein Sechzehnkerner mit acht — die andere Hälfte bleibt für alles übrige
+frei. Was erkannt wurde, steht in den Einstellungen und beim Terminalstart:
+
+```
+Maschine   : 8 Kerne erkannt — 4 schnelle, 4 sparsame → 4 Arbeiter automatisch
+```
+
+Warum nicht alles? Weil die zweite Hälfte am wenigsten bringt (siehe Tabelle:
+vier Kerne erreichen 72 % von acht) und ein Rechner, dem man alle Kerne
+weggenommen hat, sich nicht mehr wie der eigene anfühlt. Wer es anders will,
+stellt `threads` in der `config.toml` fest ein oder schiebt den Regler im
+Fenster — auch das im laufenden Betrieb.
+
 Kernanzahl, Priorität und Adressen pro Wallet lassen sich **im laufenden
 Betrieb** ändern. Statt den Thread-Pool neu zu bauen, parkt sich ein Worker
 oberhalb der eingestellten Kernzahl selbst — über dieselbe Bremse, die auch die
@@ -155,8 +172,10 @@ Drei Dinge daran sind nicht offensichtlich:
   Stufe von den Leistungskernen fern.
 * **„Sparsam" wird bei acht Kernen langsamer als bei sechs** — die Arbeit ist
   auf vier Effizienzkerne beschränkt, die sich dann gegenseitig behindern.
-* **Nur „Maximal" skaliert.** Vier Kerne liefern 72 % der Spitze, weshalb das
-  die Voreinstellung ist: die halbe Maschine bleibt frei.
+* **Nur „Maximal" skaliert.** Vier Kerne liefern 72 % der Spitze — deshalb
+  landet die automatische Wahl auf dieser Maschine bei vier: fast das ganze
+  Tempo für die halbe Maschine. Genau diese Messung ist die Regel, die oben auf
+  fremde Hardware übertragen wird.
 
 Die Oberfläche interpoliert ihre Schätzung aus dieser Tabelle und warnt, wenn die
 gewählte Kombination sich selbst im Weg steht.
@@ -272,7 +291,7 @@ Gemessen gegen 5 Mio. Einträge: 2 Fehlalarme auf 2,39 Mio. Abfragen (8,4e-7) be
 cargo test --release
 ```
 
-94 Tests. Die tragenden:
+99 Tests. Die tragenden:
 
 * BIP-39/32/44/49/84-Ableitung gegen die Referenzbibliotheken `bitcoin` und
   `bip39` über zufällige Seeds, plus die veröffentlichten Testvektoren.
@@ -283,7 +302,12 @@ cargo test --release
 * `synthetic_hits_are_labelled_not_celebrated` — ein Selbsttest-Eintrag darf nie
   wie ein echter Fund aussehen.
 * `workers_above_the_active_count_park` — die Kernsteuerung im laufenden Betrieb.
-* Oberflächen werden abseits des Bildschirms gerendert und auf Inhalt geprüft.
+* Die Terminaloberfläche wird abseits des Bildschirms gerendert und auf Inhalt
+  geprüft. Das Fenster nicht — dort prüfen die Tests die Rechenmodelle und
+  Texte, nicht das fertige Bild.
+* `recommendation_holds_for_machines_we_do_not_have` — die automatische
+  Kernwahl, durchgerechnet für Rechnerformen, die hier nicht auf dem Tisch
+  stehen.
 
 Jeder Commit wird unter Linux, macOS und Windows gebaut, getestet und geprüft.
 
