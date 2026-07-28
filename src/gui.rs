@@ -302,6 +302,71 @@ fn handle_link(ui: &mut Ui, size: f32) {
 /// fixed at compile time for the platform this build targets.
 const NOUN: &str = crate::machine::noun();
 
+/// One row in the performance list: what it is called, what it costs in a
+/// handful of words, and a five-segment meter for the speed.
+///
+/// Drawn rather than assembled from widgets so the three parts line up on a
+/// grid. The point is that the choice can be made by looking: the row used to
+/// carry the name, the core count and a percentage on one line with a
+/// sentence underneath, and reading four of those to pick one is work.
+fn preset_row(ui: &mut Ui, name: &str, sub: &str, level: u8, active: bool) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), Sense::click());
+    let hovered = resp.hovered();
+    let p = ui.painter();
+
+    let fill = if active {
+        PRIMARY
+    } else if hovered {
+        Color32::from_rgb(34, 40, 56)
+    } else {
+        BG
+    };
+    p.rect(
+        rect,
+        Rounding::same(7.0),
+        fill,
+        Stroke::new(1.0_f32, if active { PRIMARY } else { FRAME }),
+    );
+
+    let (fg, sub_fg) = if active {
+        (Color32::BLACK, Color32::from_black_alpha(150))
+    } else {
+        (TEXT, MUTED)
+    };
+    p.text(
+        rect.left_top() + Vec2::new(13.0, 7.0),
+        egui::Align2::LEFT_TOP,
+        name,
+        FontId::proportional(13.5),
+        fg,
+    );
+    p.text(
+        rect.left_top() + Vec2::new(13.0, 26.0),
+        egui::Align2::LEFT_TOP,
+        sub,
+        FontId::proportional(11.0),
+        sub_fg,
+    );
+
+    let (w, h, gap) = (13.0_f32, 6.0_f32, 4.0_f32);
+    let x0 = rect.right() - 13.0 - (5.0 * w + 4.0 * gap);
+    let y = rect.center().y - h / 2.0;
+    for i in 0..5u8 {
+        let seg =
+            egui::Rect::from_min_size(Pos2::new(x0 + i as f32 * (w + gap), y), Vec2::new(w, h));
+        let on = i < level;
+        let colour = match (on, active) {
+            (true, true) => Color32::BLACK,
+            (true, false) => PRIMARY,
+            (false, true) => Color32::from_black_alpha(55),
+            (false, false) => FRAME,
+        };
+        p.rect_filled(seg, Rounding::same(2.0), colour);
+    }
+    resp
+}
+
 /// Vertical space a [`card`] spends on itself before any content: both inner
 /// margins, the title line, the gap under it, and the stroke on both edges.
 /// Callers that hand a card an exact height have to subtract it.
@@ -1191,272 +1256,253 @@ impl GuiApp {
                 });
                 ui.add_space(12.0);
 
-                ui.label(RichText::new("LEISTUNG").color(PRIMARY).size(11.0).strong());
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new("Mehr Kerne heißt mehr Tempo, aber auch mehr Strom und Wärme.")
-                        .color(DIM)
-                        .size(12.0),
-                );
-                ui.add_space(4.0);
-                // What the hardware said, so the preset numbers below are not a
-                // mystery: on this machine they are these numbers and nowhere
-                // else the same.
-                ui.label(RichText::new(machine.describe()).color(PRIMARY).size(11.5));
-                ui.add_space(10.0);
+                // Everything below the header scrolls. With the expert
+                // section open the panel is taller than the window, and the
+                // last row was simply unreachable.
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                    ui.label(RichText::new("LEISTUNG").color(PRIMARY).size(11.0).strong());
+                    ui.add_space(4.0);
+                    // What the hardware said. The sentence that used to sit here —
+                    // more cores, more heat — was telling the reader what the rows
+                    // below already show.
+                    ui.label(RichText::new(machine.describe()).color(DIM).size(11.5));
+                    ui.add_space(10.0);
 
-                // Presets carry the measured trade-off in their labels, so the
-                // choice does not require reading a benchmark first. Every
-                // count comes from the machine, not from the machine this was
-                // written on.
-                let quiet_hint = if machine.efficiency > 0 {
-                    format!("Nur Effizienzkerne, {} bleibt kühl und leise", NOUN)
-                } else {
-                    format!("Wenige Kerne, gedrosselt — {NOUN} bleibt kühl und leise")
-                };
-                let presets = [
-                    (
-                        "Unauffällig",
-                        1usize,
-                        Priority::Background,
-                        1u8,
-                        "Ein Kern, ein Prozent der Zeit — kein Lüfter, kein Akku, \
-                         läuft monatelang nebenher"
-                            .to_string(),
-                    ),
-                    (
-                        "Sparsam",
-                        machine.economical_threads(),
-                        Priority::Background,
-                        100u8,
-                        quiet_hint,
-                    ),
-                    (
-                        "Ausgewogen",
-                        machine.recommended_threads(),
-                        Priority::Normal,
-                        100u8,
-                        if machine.efficiency > 0 {
-                            "Empfohlen — die schnellen Kerne, volles Tempo darauf".to_string()
+                    // Each row says what it costs in its own words: how much of
+                    // the machine, and what that feels like. The meter carries the
+                    // speed, so nobody has to compare four percentages.
+                    let cores = |n: usize| {
+                        if n == 1 {
+                            "1 Kern".to_string()
                         } else {
-                            "Empfohlen — halbe Kerne, volles Tempo darauf".to_string()
-                        },
-                    ),
-                    (
-                        "Maximum",
-                        max_cores,
-                        Priority::Normal,
-                        100u8,
-                        format!("Alle Kerne, {NOUN} wird warm und lauter"),
-                    ),
-                ];
-                for (name, t, prio, duty, hint) in presets {
-                    let t = t.min(max_cores);
-                    let active = threads == t
-                        && self.control.priority() == prio
-                        && self.control.throttle() == duty;
-                    // A duty cycle multiplies straight into the estimate, and
-                    // at one percent the usual rounding would print "0 %".
-                    let share = self.expected_share(t, prio) * duty as f64 / 100.0;
-                    let tempo = if share * 100.0 < 1.0 {
-                        format!("{:.2} % Tempo", share * 100.0).replace('.', ",")
-                    } else {
-                        format!("{:.0} % Tempo", share * 100.0)
+                            format!("{n} Kerne")
+                        }
                     };
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                RichText::new(format!(
-                                    "{name}   ·   {t} {}   ·   ca. {tempo}",
-                                    if t == 1 { "Kern" } else { "Kerne" }
-                                ))
-                                .color(if active { Color32::BLACK } else { TEXT })
-                                .size(12.5)
-                                .strong(),
-                            )
-                            .fill(if active { PRIMARY } else { BG })
-                            .stroke(Stroke::new(1.0_f32, FRAME))
-                            .rounding(Rounding::same(6.0))
-                            .min_size(Vec2::new(ui.available_width(), 28.0)),
-                        )
-                        .clicked()
-                    {
-                        self.control.set_active_threads(t);
-                        self.control.set_priority(prio);
-                        self.control.set_throttle(duty);
-                    }
-                    ui.label(RichText::new(hint).color(MUTED).size(11.0));
-                    ui.add_space(8.0);
-                }
+                    let quiet_cores = if machine.efficiency > 0 {
+                        format!("{} sparsame", machine.economical_threads())
+                    } else {
+                        cores(machine.economical_threads())
+                    };
+                    let fast_cores = if machine.efficiency > 0 {
+                        format!("{} schnelle", machine.recommended_threads())
+                    } else {
+                        cores(machine.recommended_threads())
+                    };
 
-                ui.add_space(6.0);
-                ui.separator();
-                ui.add_space(6.0);
+                    let presets = [
+                        (
+                            "Unauffällig",
+                            1usize,
+                            Priority::Background,
+                            1u8,
+                            "1 Kern · läuft unbemerkt mit".to_string(),
+                            1u8,
+                        ),
+                        (
+                            "Sparsam",
+                            machine.economical_threads(),
+                            Priority::Background,
+                            100u8,
+                            format!("{quiet_cores} Kerne · kühl und leise"),
+                            2u8,
+                        ),
+                        (
+                            "Ausgewogen",
+                            machine.recommended_threads(),
+                            Priority::Normal,
+                            100u8,
+                            format!("{fast_cores} Kerne · empfohlen"),
+                            4u8,
+                        ),
+                        (
+                            "Maximum",
+                            max_cores,
+                            Priority::Normal,
+                            100u8,
+                            format!("{} · {NOUN} wird warm und laut", cores(max_cores)),
+                            5u8,
+                        ),
+                    ];
 
-                // Mnemonic length. Not behind the expert gate: it is a plain
-                // question about what is being searched, not a knob that can
-                // make the machine unpleasant to use.
-                ui.label(
-                    RichText::new("WORTLÄNGE")
-                        .color(PRIMARY)
-                        .size(11.0)
-                        .strong(),
-                );
-                ui.add_space(6.0);
-                ui.horizontal_wrapped(|ui| {
-                    for wc in crate::bip39::ALL_WORD_COUNTS {
-                        let on = self.control.word_count() == wc;
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    RichText::new(format!("{}", wc.words()))
-                                        .color(if on { Color32::BLACK } else { TEXT })
-                                        .size(12.0),
-                                )
-                                .fill(if on { PRIMARY } else { BG })
-                                .stroke(Stroke::new(1.0_f32, FRAME))
-                                .rounding(Rounding::same(5.0)),
-                            )
-                            .clicked()
-                        {
-                            self.control.set_word_count(wc);
+                    for (name, t, prio, duty, sub, level) in presets {
+                        let t = t.min(max_cores);
+                        let active = threads == t
+                            && self.control.priority() == prio
+                            && self.control.throttle() == duty;
+                        if preset_row(ui, name, &sub, level, active).clicked() {
+                            self.control.set_active_threads(t);
+                            self.control.set_priority(prio);
+                            self.control.set_throttle(duty);
                         }
+                        ui.add_space(6.0);
                     }
-                });
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(format!(
-                        "Suchraum 2^{}. Jede Stufe kürzer sind drei Wörter weniger und \
-                         damit ein 4-Milliarden-fach kleinerer Raum — aussichtsreich \
-                         wird die Suche dadurch nicht.",
-                        self.entropy_bits()
-                    ))
-                    .color(MUTED)
-                    .size(11.0),
-                );
 
-                ui.add_space(6.0);
-                ui.separator();
-                ui.add_space(6.0);
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.add_space(6.0);
 
-                ui.horizontal(|ui| {
-                    let mut on = self.expert_unlocked;
-                    // Unlocking is gated; switching off never is.
-                    if ui.checkbox(&mut on, "").changed() {
-                        if on {
-                            self.expert_prompt = true;
-                        } else {
-                            self.expert_unlocked = false;
-                        }
-                    }
+                    // Mnemonic length. Not behind the expert gate: it is a plain
+                    // question about what is being searched, not a knob that can
+                    // make the machine unpleasant to use.
                     ui.label(
-                        RichText::new("Expertenmodus")
-                            .color(if self.expert_unlocked { WARN } else { DIM })
-                            .size(13.0)
+                        RichText::new("WORTLÄNGE")
+                            .color(PRIMARY)
+                            .size(11.0)
                             .strong(),
                     );
-                });
-
-                if !self.expert_unlocked {
+                    ui.add_space(6.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for wc in crate::bip39::ALL_WORD_COUNTS {
+                            let on = self.control.word_count() == wc;
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new(format!("{}", wc.words()))
+                                            .color(if on { Color32::BLACK } else { TEXT })
+                                            .size(12.0),
+                                    )
+                                    .fill(if on { PRIMARY } else { BG })
+                                    .stroke(Stroke::new(1.0_f32, FRAME))
+                                    .rounding(Rounding::same(5.0)),
+                                )
+                                .clicked()
+                            {
+                                self.control.set_word_count(wc);
+                            }
+                        }
+                    });
+                    ui.add_space(6.0);
                     ui.label(
-                        RichText::new(
-                            "Direkte Regler für Kerne, Priorität und Adressen pro Wallet.",
-                        )
+                        RichText::new(format!(
+                            "Suchraum 2^{} — kürzer heißt kleiner, nicht aussichtsreicher.",
+                            self.entropy_bits()
+                        ))
                         .color(MUTED)
                         .size(11.0),
                     );
-                    return;
-                }
 
-                ui.add_space(10.0);
-                let mut t = self.control.active_threads();
-                ui.label(RichText::new("Kerne").color(DIM).size(12.0));
-                if ui
-                    .add_sized(
-                        Vec2::new(ui.available_width(), 20.0),
-                        egui::Slider::new(&mut t, 1..=max_cores),
-                    )
-                    .changed()
-                {
-                    self.control.set_active_threads(t);
-                }
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.add_space(6.0);
 
-                ui.add_space(8.0);
-                let mut n = self.control.addresses_per_path();
-                ui.label(RichText::new("Adressen pro Pfad").color(DIM).size(12.0));
-                if ui
-                    .add_sized(
-                        Vec2::new(ui.available_width(), 20.0),
-                        egui::Slider::new(&mut n, 1..=50),
-                    )
-                    .changed()
-                {
-                    self.control.set_addresses_per_path(n);
-                }
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(format!(
-                        "{} Adressen je Wallet. Weniger = mehr Wallets/s, aber weniger Adressen/s.",
-                        n * 3
-                    ))
-                    .color(MUTED)
-                    .size(11.0),
-                );
-
-                ui.add_space(4.0);
-                let prio = self.control.priority();
-                ui.label(
-                    RichText::new(format!(
-                        "Geschätztes Tempo: ca. {:.0} % des Maximums",
-                        self.expected_share(t, prio) * 100.0
-                    ))
-                    .color(TEXT)
-                    .size(12.0),
-                );
-                if self.is_counterproductive(t, prio) {
-                    ui.label(
-                        RichText::new(
-                            "Achtung: bei Priorität „Sparsam\" laufen alle Threads auf den \
-                             Effizienzkernen. Mehr als die Hälfte der Kerne macht es dort \
-                             langsamer, nicht schneller.",
-                        )
-                        .color(WARN)
-                        .size(11.5),
-                    );
-                }
-
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Priorität").color(DIM).size(12.0));
-                    for p in [Priority::Background, Priority::Utility, Priority::Normal] {
-                        let on = self.control.priority() == p;
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    RichText::new(p.label())
-                                        .color(if on { Color32::BLACK } else { TEXT })
-                                        .size(12.0),
-                                )
-                                .fill(if on { WARN } else { BG })
-                                .stroke(Stroke::new(1.0_f32, FRAME))
-                                .rounding(Rounding::same(5.0)),
-                            )
-                            .clicked()
-                        {
-                            self.control.set_priority(p);
+                    ui.horizontal(|ui| {
+                        let mut on = self.expert_unlocked;
+                        // Unlocking is gated; switching off never is.
+                        if ui.checkbox(&mut on, "").changed() {
+                            if on {
+                                self.expert_prompt = true;
+                            } else {
+                                self.expert_unlocked = false;
+                            }
                         }
-                    }
-                });
+                        ui.label(
+                            RichText::new("Expertenmodus")
+                                .color(if self.expert_unlocked { WARN } else { DIM })
+                                .size(13.0)
+                                .strong(),
+                        );
+                    });
 
-                ui.add_space(8.0);
-                ui.label(
-                    RichText::new(
-                        "Änderungen wirken sofort und werden nicht gespeichert. \
-                         Für dauerhafte Werte config.toml bearbeiten.",
-                    )
-                    .color(MUTED)
-                    .size(11.0),
-                );
+                    if !self.expert_unlocked {
+                        ui.label(
+                            RichText::new(
+                                "Direkte Regler für Kerne, Priorität und Adressen pro Wallet.",
+                            )
+                            .color(MUTED)
+                            .size(11.0),
+                        );
+                        return;
+                    }
+
+                    ui.add_space(10.0);
+                    let mut t = self.control.active_threads();
+                    ui.label(RichText::new("Kerne").color(DIM).size(12.0));
+                    if ui
+                        .add_sized(
+                            Vec2::new(ui.available_width(), 20.0),
+                            egui::Slider::new(&mut t, 1..=max_cores),
+                        )
+                        .changed()
+                    {
+                        self.control.set_active_threads(t);
+                    }
+
+                    ui.add_space(8.0);
+                    let mut n = self.control.addresses_per_path();
+                    ui.label(RichText::new("Adressen pro Pfad").color(DIM).size(12.0));
+                    if ui
+                        .add_sized(
+                            Vec2::new(ui.available_width(), 20.0),
+                            egui::Slider::new(&mut n, 1..=50),
+                        )
+                        .changed()
+                    {
+                        self.control.set_addresses_per_path(n);
+                    }
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "{} Adressen je Wallet. Weniger = mehr Wallets/s, aber weniger Adressen/s.",
+                            n * 3
+                        ))
+                        .color(MUTED)
+                        .size(11.0),
+                    );
+
+                    ui.add_space(4.0);
+                    let prio = self.control.priority();
+                    ui.label(
+                        RichText::new(format!(
+                            "Geschätztes Tempo: ca. {:.0} % des Maximums",
+                            self.expected_share(t, prio) * 100.0
+                        ))
+                        .color(TEXT)
+                        .size(12.0),
+                    );
+                    if self.is_counterproductive(t, prio) {
+                        ui.label(
+                            RichText::new(
+                                "Achtung: bei Priorität „Sparsam\" laufen alle Threads auf den \
+                                 Effizienzkernen. Mehr als die Hälfte der Kerne macht es dort \
+                                 langsamer, nicht schneller.",
+                            )
+                            .color(WARN)
+                            .size(11.5),
+                        );
+                    }
+
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Priorität").color(DIM).size(12.0));
+                        for p in [Priority::Background, Priority::Utility, Priority::Normal] {
+                            let on = self.control.priority() == p;
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new(p.label())
+                                            .color(if on { Color32::BLACK } else { TEXT })
+                                            .size(12.0),
+                                    )
+                                    .fill(if on { WARN } else { BG })
+                                    .stroke(Stroke::new(1.0_f32, FRAME))
+                                    .rounding(Rounding::same(5.0)),
+                                )
+                                .clicked()
+                            {
+                                self.control.set_priority(p);
+                            }
+                        }
+                    });
+
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("Wirkt sofort, wird nicht gespeichert.")
+                            .color(MUTED)
+                            .size(11.0),
+                    );
+                    });
             });
 
         // The gate. Deliberately modal and deliberately not pre-answered.
