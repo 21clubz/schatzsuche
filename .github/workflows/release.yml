@@ -55,8 +55,20 @@ jobs:
         env:
           RUSTFLAGS: -C target-cpu=${{ matrix.cpu }}
 
-      - name: Package (Unix)
-        if: runner.os != 'Windows'
+      # macOS gets the application bundle as well as the bare binary: a
+      # double-click has to produce a window, and only a bundle does that.
+      # The signature is ad-hoc, so the README explains the Gatekeeper prompt.
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist
+          scripts/make-macos-app.sh target/${{ matrix.target }}/release/schatzsuche dist
+          cp target/${{ matrix.target }}/release/schatzsuche dist/
+          cp README.md LICENSE dist/
+          COPYFILE_DISABLE=1 tar -czf ${{ matrix.archive }}.tar.gz -C dist .
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/schatzsuche dist/

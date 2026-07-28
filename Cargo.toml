@@ -2,6 +2,12 @@
 name = "schatzsuche"
 version = "0.1.0"
 edition = "2021"
+description = "Rät zufällige BIP-39-Wallets und misst die Aussichtslosigkeit in Vielfachen des Universumsalters."
+authors = ["21clubz"]
+license = "MIT"
+readme = "README.md"
+keywords = ["bitcoin", "bip39", "keyspace", "benchmark"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 getrandom = "0.2"
