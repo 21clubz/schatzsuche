@@ -74,6 +74,8 @@ pub struct GuiApp {
     /// Populated by the loader thread when loading fails.
     load_error: Option<String>,
     settings_open: bool,
+    /// Which preset has its explanation open, if any.
+    info_open: Option<usize>,
     /// Expert controls stay locked until the warning has been acknowledged.
     expert_unlocked: bool,
     expert_prompt: bool,
@@ -116,6 +118,10 @@ impl GuiApp {
             loading,
             load_error: None,
             settings_open: std::env::var("SC_SHOT_SETTINGS").is_ok(),
+            // Screenshot hook, in the same family as the two above.
+            info_open: std::env::var("SC_SHOT_INFO")
+                .ok()
+                .and_then(|v| v.parse().ok()),
             expert_unlocked: std::env::var("SC_SHOT_SETTINGS").is_ok(),
             expert_prompt: false,
         }
@@ -309,10 +315,20 @@ const NOUN: &str = crate::machine::noun();
 /// grid. The point is that the choice can be made by looking: the row used to
 /// carry the name, the core count and a percentage on one line with a
 /// sentence underneath, and reading four of those to pick one is work.
-fn preset_row(ui: &mut Ui, name: &str, sub: &str, level: u8, active: bool) -> egui::Response {
+fn preset_row(ui: &mut Ui, name: &str, sub: &str, level: u8, active: bool) -> (bool, bool) {
     let (rect, resp) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), Sense::click());
-    let hovered = resp.hovered();
+
+    // The question mark gets its own hit area at the right end. Interacted
+    // with after the row, so it is on top; the caller checks it first and
+    // ignores the row underneath when it was the one clicked.
+    let info_rect = egui::Rect::from_center_size(
+        Pos2::new(rect.right() - 24.0, rect.center().y),
+        Vec2::splat(24.0),
+    );
+    let info = ui.interact(info_rect, ui.id().with(name), Sense::click());
+
+    let hovered = resp.hovered() && !info.hovered();
     let p = ui.painter();
 
     let fill = if active {
@@ -349,8 +365,8 @@ fn preset_row(ui: &mut Ui, name: &str, sub: &str, level: u8, active: bool) -> eg
         sub_fg,
     );
 
-    let (w, h, gap) = (13.0_f32, 6.0_f32, 4.0_f32);
-    let x0 = rect.right() - 13.0 - (5.0 * w + 4.0 * gap);
+    let (w, h, gap) = (11.0_f32, 6.0_f32, 4.0_f32);
+    let x0 = rect.right() - 44.0 - (5.0 * w + 4.0 * gap);
     let y = rect.center().y - h / 2.0;
     for i in 0..5u8 {
         let seg =
@@ -364,7 +380,38 @@ fn preset_row(ui: &mut Ui, name: &str, sub: &str, level: u8, active: bool) -> eg
         };
         p.rect_filled(seg, Rounding::same(2.0), colour);
     }
-    resp
+
+    let mark = if active {
+        Color32::from_black_alpha(if info.hovered() { 220 } else { 120 })
+    } else if info.hovered() {
+        PRIMARY
+    } else {
+        DIM
+    };
+    p.circle_stroke(info_rect.center(), 8.5, Stroke::new(1.4_f32, mark));
+    p.text(
+        info_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "i",
+        FontId::proportional(11.5),
+        mark,
+    );
+
+    (resp.clicked(), info.clicked())
+}
+
+/// The explanation a question mark opens: plain language, three lines at most,
+/// and about *when* to pick it rather than what it does technically.
+fn preset_help(ui: &mut Ui, text: &str) {
+    egui::Frame::none()
+        .fill(Color32::from_rgb(22, 27, 40))
+        .rounding(Rounding::same(6.0))
+        .stroke(Stroke::new(1.0_f32, FRAME))
+        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(text).color(TEXT).size(11.5));
+        });
 }
 
 /// Vertical space a [`card`] spends on itself before any content: both inner
@@ -1299,6 +1346,10 @@ impl GuiApp {
                             1u8,
                             "1 Kern · läuft unbemerkt mit".to_string(),
                             1u8,
+                            "Für nebenher. Der Rechner arbeitet nur ein Prozent der Zeit \
+                             daran — kein Lüfter, kein spürbarer Akkuverbrauch, nichts, was \
+                             du merkst. Nimm das, wenn du es einfach monatelang mitlaufen \
+                             lassen willst.",
                         ),
                         (
                             "Sparsam",
@@ -1307,6 +1358,10 @@ impl GuiApp {
                             100u8,
                             format!("{quiet_cores} Kerne · kühl und leise"),
                             2u8,
+                            "Leise, aber schon deutlich schneller. Läuft auf den sparsamen \
+                             Kernen, die dein Gerät auch für Hintergrundaufgaben benutzt. \
+                             Gut, wenn der Laptop auf dem Schoß steht oder du in Ruhe \
+                             arbeiten willst.",
                         ),
                         (
                             "Ausgewogen",
@@ -1315,6 +1370,9 @@ impl GuiApp {
                             100u8,
                             format!("{fast_cores} Kerne · empfohlen"),
                             4u8,
+                            "Die Voreinstellung, und für die meisten die richtige. Nutzt die \
+                             schnelle Hälfte des Rechners und lässt die andere frei — du \
+                             kannst nebenher normal weiterarbeiten, ohne dass etwas hakt.",
                         ),
                         (
                             "Maximum",
@@ -1323,23 +1381,41 @@ impl GuiApp {
                             100u8,
                             format!("{} · {NOUN} wird warm und laut", cores(max_cores)),
                             5u8,
+                            "Alles, was die Maschine hat. Nimm das nur, wenn du den Rechner \
+                             gerade nicht brauchst — er wird warm, der Lüfter läuft, und am \
+                             Akku hältst du es nicht lange durch.",
                         ),
                     ];
 
-                    for (name, t, prio, duty, sub, level) in presets {
-                        let t = t.min(max_cores);
-                        let active = threads == t
-                            && self.control.priority() == prio
-                            && self.control.throttle() == duty;
-                        if preset_row(ui, name, &sub, level, active).clicked() {
-                            self.control.set_active_threads(t);
-                            self.control.set_priority(prio);
-                            self.control.set_throttle(duty);
-                        }
-                        ui.add_space(6.0);
+                    for (idx, (name, t, prio, duty, sub, level, help)) in
+                    presets.into_iter().enumerate()
+                {
+                    let t = t.min(max_cores);
+                    let active = threads == t
+                        && self.control.priority() == prio
+                        && self.control.throttle() == duty;
+                    let (row_clicked, info_clicked) =
+                        preset_row(ui, name, &sub, level, active);
+                    if info_clicked {
+                        // Second click on the same mark closes it again.
+                        self.info_open = if self.info_open == Some(idx) {
+                            None
+                        } else {
+                            Some(idx)
+                        };
+                    } else if row_clicked {
+                        self.control.set_active_threads(t);
+                        self.control.set_priority(prio);
+                        self.control.set_throttle(duty);
                     }
-
+                    if self.info_open == Some(idx) {
+                        ui.add_space(4.0);
+                        preset_help(ui, help);
+                    }
                     ui.add_space(6.0);
+                }
+
+                ui.add_space(6.0);
                     ui.separator();
                     ui.add_space(6.0);
 
