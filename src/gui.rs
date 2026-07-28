@@ -36,6 +36,7 @@ const MUTED: Color32 = Color32::from_rgb(58, 66, 96);
 const ALERT: Color32 = Color32::from_rgb(247, 118, 142);
 const WARN: Color32 = Color32::from_rgb(224, 175, 104);
 const GOLD: Color32 = Color32::from_rgb(232, 176, 84);
+const GREEN: Color32 = Color32::from_rgb(129, 200, 149);
 
 /// How long the intro is shown before the dashboard takes over.
 ///
@@ -79,6 +80,8 @@ pub struct GuiApp {
     /// Expert controls stay locked until the warning has been acknowledged.
     expert_unlocked: bool,
     expert_prompt: bool,
+    /// The recovery screen, when open. `None` is the normal dashboard.
+    recover: Option<crate::recover_ui::RecoverUi>,
 }
 
 impl GuiApp {
@@ -124,6 +127,16 @@ impl GuiApp {
                 .and_then(|v| v.parse().ok()),
             expert_unlocked: std::env::var("SC_SHOT_SETTINGS").is_ok(),
             expert_prompt: false,
+            recover: std::env::var("SC_SHOT_RECOVER").ok().map(|v| {
+                let mut r = crate::recover_ui::RecoverUi::default();
+                if v == "filled" {
+                    r.words = "abandon abandon abandon abandon abandon abandon                                abandon abandon abandon abandon abandon ?"
+                        .into();
+                    r.address = "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu".into();
+                    r.acknowledged = true;
+                }
+                r
+            }),
         }
     }
 
@@ -457,6 +470,492 @@ fn preset_help(ui: &mut Ui, text: &str) {
         });
 }
 
+// --- Recovery screen -------------------------------------------------------
+
+/// A small numbered badge, so the form reads as steps 1, 2, 3.
+fn step_badge(ui: &mut Ui, n: u32, title: &str) {
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover());
+        ui.painter().circle_filled(rect.center(), 11.0, PRIMARY);
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            n.to_string(),
+            FontId::proportional(12.5),
+            Color32::BLACK,
+        );
+        ui.add_space(8.0);
+        ui.label(RichText::new(title).color(TEXT).size(14.0).strong());
+    });
+}
+
+/// A rough duration in German words. Matches the terminal wording.
+fn format_estimate(secs: f64) -> String {
+    if secs < 1.0 {
+        "unter einer Sekunde".into()
+    } else if secs < 90.0 {
+        format!("etwa {} Sekunden", secs.round() as u64)
+    } else if secs < 5400.0 {
+        format!("etwa {} Minuten", (secs / 60.0).round() as u64)
+    } else if secs < 172_800.0 {
+        format!("etwa {} Stunden", (secs / 3600.0).round() as u64)
+    } else {
+        format!("etwa {} Tage", (secs / 86_400.0).round() as u64)
+    }
+}
+
+/// One of the three damage-mode cards in the picker.
+fn mode_card(ui: &mut Ui, active: bool, title: &str, sub: &str) -> bool {
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 58.0), Sense::click());
+    let hovered = resp.hovered();
+    let p = ui.painter();
+    p.rect(
+        rect,
+        Rounding::same(8.0),
+        if active {
+            Color32::from_rgb(30, 46, 64)
+        } else if hovered {
+            Color32::from_rgb(28, 33, 46)
+        } else {
+            BG
+        },
+        Stroke::new(
+            if active { 1.6_f32 } else { 1.0 },
+            if active { PRIMARY } else { FRAME },
+        ),
+    );
+    // A filled dot when chosen, a ring when not — a radio button, in effect.
+    let dot = rect.left_center() + Vec2::new(20.0, 0.0);
+    if active {
+        p.circle_filled(dot, 7.0, PRIMARY);
+        p.circle_filled(dot, 3.0, Color32::BLACK);
+    } else {
+        p.circle_stroke(dot, 7.0, Stroke::new(1.4_f32, DIM));
+    }
+    p.text(
+        rect.left_top() + Vec2::new(44.0, 11.0),
+        egui::Align2::LEFT_TOP,
+        title,
+        FontId::proportional(13.5),
+        TEXT,
+    );
+    p.text(
+        rect.left_top() + Vec2::new(44.0, 32.0),
+        egui::Align2::LEFT_TOP,
+        sub,
+        FontId::proportional(11.5),
+        DIM,
+    );
+    resp.clicked()
+}
+
+/// The editing form: mode, words, address, live preview, warning, start.
+fn recover_form(
+    ui: &mut Ui,
+    r: &mut crate::recover_ui::RecoverUi,
+    _keep_open: &mut bool,
+    depth: u32,
+) {
+    use crate::recover::Mode;
+    use crate::recover_ui::Preview;
+
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new(
+            "Dir fehlt ein Stück deiner eigenen Seed? Wenn du die meisten Wörter noch \
+             hast und eine Adresse der Wallet kennst, lässt sich der Rest oft ausrechnen.",
+        )
+        .color(DIM)
+        .size(12.5),
+    );
+    ui.add_space(16.0);
+
+    // Step 1 — what went wrong.
+    step_badge(ui, 1, "Was ist passiert?");
+    ui.add_space(8.0);
+    let modes = [
+        (
+            Mode::Missing,
+            "Ein Wort fehlt",
+            "Du weißt nicht mehr, wie ein Wort hieß",
+        ),
+        (
+            Mode::Typo,
+            "Ein Wort ist falsch",
+            "Ein Wort stimmt nicht, du weißt aber nicht welches",
+        ),
+        (
+            Mode::Swap,
+            "Zwei Wörter vertauscht",
+            "Zwei benachbarte Wörter stehen in falscher Reihenfolge",
+        ),
+    ];
+    for (m, title, sub) in modes {
+        if mode_card(ui, r.mode == m, title, sub) {
+            r.mode = m;
+        }
+        ui.add_space(6.0);
+    }
+
+    ui.add_space(12.0);
+
+    // Step 2 — the words.
+    step_badge(ui, 2, "Deine Wörter");
+    ui.add_space(6.0);
+    let hint = match r.mode {
+        Mode::Missing => {
+            "Alle Wörter der Reihe nach. Für jedes fehlende Wort ein Fragezeichen (?)."
+        }
+        Mode::Typo => "Alle 12–24 Wörter, so wie du sie hast — samt dem falschen.",
+        Mode::Swap => "Alle Wörter in der Reihenfolge, die du hast.",
+    };
+    ui.label(RichText::new(hint).color(DIM).size(11.5));
+    ui.add_space(6.0);
+    ui.add(
+        egui::TextEdit::multiline(&mut r.words)
+            .desired_rows(3)
+            .desired_width(f32::INFINITY)
+            .hint_text(match r.mode {
+                Mode::Missing => "z. B.  legal winner thank ? ? … about",
+                _ => "z. B.  legal winner thank year wave …",
+            })
+            .font(mono(13.0)),
+    );
+
+    ui.add_space(14.0);
+
+    // Step 3 — the target.
+    step_badge(ui, 3, "Eine Adresse deiner Wallet");
+    ui.add_space(6.0);
+    ui.label(
+        RichText::new(
+            "Eine Empfangsadresse, von der du sicher weißt, dass sie zu dieser Wallet gehört.",
+        )
+        .color(DIM)
+        .size(11.5),
+    );
+    ui.add_space(6.0);
+    ui.add(
+        egui::TextEdit::singleline(&mut r.address)
+            .desired_width(f32::INFINITY)
+            .hint_text("bc1q…  oder  1…  oder  3…")
+            .font(mono(13.0)),
+    );
+
+    ui.add_space(16.0);
+
+    // Live preview of the search space.
+    match r.preview() {
+        Preview::Empty => {}
+        Preview::Invalid(msg) => {
+            recover_note(ui, WARN, &msg);
+            ui.add_space(12.0);
+        }
+        Preview::Ready { candidates, secs } => {
+            let big = candidates > 50_000_000;
+            recover_note(
+                ui,
+                if big { WARN } else { GREEN },
+                &format!(
+                    "{} Kombinationen zu prüfen · geschätzte Dauer {}{}",
+                    util::group_digits(candidates),
+                    format_estimate(secs),
+                    if big {
+                        " — das kann lange dauern"
+                    } else {
+                        ""
+                    },
+                ),
+            );
+            ui.add_space(12.0);
+        }
+    }
+
+    // The warning and its checkbox.
+    egui::Frame::none()
+        .fill(Color32::from_rgb(38, 30, 20))
+        .rounding(Rounding::same(8.0))
+        .stroke(Stroke::new(1.0_f32, WARN))
+        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                RichText::new("Bevor es losgeht")
+                    .color(WARN)
+                    .size(13.0)
+                    .strong(),
+            );
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(
+                    "• Dieser Rechner ist mit dem Internet verbunden. Ein Rechner am Netz \
+                     kann angegriffen werden — wer ganz sichergehen will, macht das an einem \
+                     Gerät ohne Netz.\n\
+                     • Deine Wörter verlassen diesen Rechner nicht. Sie werden nur hier \
+                     ausprobiert — im Quelltext nachprüfbar.\n\
+                     • Gib deine Wörter niemals auf einer Webseite ein, die verspricht, sie \
+                     „wiederherzustellen“.",
+                )
+                .color(TEXT)
+                .size(12.0),
+            );
+            ui.add_space(10.0);
+            ui.checkbox(
+                &mut r.acknowledged,
+                RichText::new("Ich habe das gelesen und weiß, was ich tue.")
+                    .color(TEXT)
+                    .size(12.5),
+            );
+        });
+
+    ui.add_space(16.0);
+
+    // Start.
+    let ready = r.can_start();
+    let (label, fill, fg) = if ready {
+        ("Suche starten", PRIMARY, Color32::BLACK)
+    } else {
+        ("Suche starten", Color32::from_rgb(30, 35, 48), MUTED)
+    };
+    let btn = egui::Button::new(RichText::new(label).color(fg).size(14.0).strong())
+        .fill(fill)
+        .rounding(Rounding::same(8.0))
+        .min_size(Vec2::new(ui.available_width(), 40.0));
+    if ui.add_enabled(ready, btn).clicked() {
+        if let Err(e) = r.start(depth) {
+            // Should not happen — can_start checked the plan — but never panic
+            // a search screen; show the reason instead.
+            r.words = format!("{}\n(Fehler: {e})", r.words);
+        }
+    }
+    if !ready {
+        ui.add_space(6.0);
+        let why = if !matches!(r.preview(), Preview::Ready { .. }) {
+            "Trag zuerst deine Wörter ein."
+        } else if r.address.trim().is_empty() {
+            "Es fehlt noch eine Adresse."
+        } else {
+            "Setz den Haken oben, dann geht es los."
+        };
+        ui.label(RichText::new(why).color(MUTED).size(11.5));
+    }
+    ui.add_space(20.0);
+}
+
+/// A one-line coloured note with a leading glyph.
+/// A one-line coloured note with a painted dot, not a glyph. The default font
+/// ships no check or warning symbol, so a small filled circle stands in.
+fn recover_note(ui: &mut Ui, colour: Color32, text: &str) {
+    egui::Frame::none()
+        .fill(Color32::from_rgba_unmultiplied(
+            colour.r(),
+            colour.g(),
+            colour.b(),
+            22,
+        ))
+        .rounding(Rounding::same(7.0))
+        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
+                ui.painter().circle_filled(rect.center(), 4.0, colour);
+                ui.add_space(4.0);
+                ui.label(RichText::new(text).color(TEXT).size(12.0));
+            });
+        });
+}
+
+/// The running screen: a progress bar, the count, elapsed time, and cancel.
+fn recover_running(ui: &mut Ui, r: &mut crate::recover_ui::RecoverUi) {
+    use crate::recover_ui::Phase;
+    let (done, total, elapsed) = match &r.phase {
+        Phase::Running {
+            counter,
+            total,
+            started,
+            ..
+        } => (
+            counter.load(std::sync::atomic::Ordering::Relaxed),
+            *total,
+            started.elapsed().as_secs(),
+        ),
+        _ => return,
+    };
+    let frac = if total > 0 {
+        (done as f64 / total as f64).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    ui.add_space(40.0);
+    ui.vertical_centered(|ui| {
+        ui.label(
+            RichText::new("Suche läuft …")
+                .color(TEXT)
+                .size(18.0)
+                .strong(),
+        );
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new("Das Fenster kann offen bleiben. Du kannst jederzeit abbrechen.")
+                .color(DIM)
+                .size(12.0),
+        );
+    });
+    ui.add_space(24.0);
+
+    // Progress bar.
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 14.0), Sense::hover());
+    ui.painter()
+        .rect_filled(rect, 7.0, Color32::from_rgb(28, 33, 48));
+    if frac > 0.0 {
+        let mut filled = rect;
+        filled.set_width((rect.width() * frac as f32).max(14.0));
+        ui.painter().rect_filled(filled, 7.0, PRIMARY);
+    }
+
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(format!("{:.1} %", frac * 100.0))
+                .color(PRIMARY)
+                .font(mono(15.0))
+                .strong(),
+        );
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.label(
+                RichText::new(format!(
+                    "{} / {}   ·   {}",
+                    util::group_digits(done),
+                    util::group_digits(total),
+                    util::format_duration(elapsed)
+                ))
+                .color(DIM)
+                .size(12.0),
+            );
+        });
+    });
+
+    ui.add_space(24.0);
+    ui.vertical_centered(|ui| {
+        if ui
+            .add(
+                egui::Button::new(RichText::new("Abbrechen").color(TEXT).size(13.0))
+                    .fill(PANEL)
+                    .stroke(Stroke::new(1.0_f32, FRAME))
+                    .rounding(Rounding::same(8.0))
+                    .min_size(Vec2::new(160.0, 34.0)),
+            )
+            .clicked()
+        {
+            r.cancel();
+        }
+    });
+}
+
+/// The result screen: the found seed, or nothing.
+fn recover_done(ui: &mut Ui, r: &mut crate::recover_ui::RecoverUi, _keep_open: &mut bool) {
+    use crate::recover_ui::Phase;
+    let found = match &r.phase {
+        Phase::Done(f) => f.clone(),
+        _ => None,
+    };
+
+    ui.add_space(30.0);
+    match found {
+        Some(f) => {
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new("✓  Gefunden")
+                        .color(GREEN)
+                        .size(22.0)
+                        .strong(),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Schreib die Wörter jetzt auf Papier. Nirgends sonst.")
+                        .color(DIM)
+                        .size(12.5),
+                );
+            });
+            ui.add_space(20.0);
+
+            // The words, numbered on a grid so they are easy to copy by hand.
+            egui::Frame::none()
+                .fill(Color32::from_rgb(20, 30, 24))
+                .rounding(Rounding::same(10.0))
+                .stroke(Stroke::new(1.0_f32, GREEN))
+                .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    let words: Vec<&str> = f.mnemonic.split_whitespace().collect();
+                    egui::Grid::new("seed_words")
+                        .num_columns(3)
+                        .spacing(Vec2::new(24.0, 8.0))
+                        .show(ui, |ui| {
+                            for (i, w) in words.iter().enumerate() {
+                                ui.label(
+                                    RichText::new(format!("{:>2}. {}", i + 1, w))
+                                        .color(TEXT)
+                                        .font(mono(14.0)),
+                                );
+                                if (i + 1) % 3 == 0 {
+                                    ui.end_row();
+                                }
+                            }
+                        });
+                });
+            ui.add_space(12.0);
+            recover_note(ui, DIM, &format!("Pfad: {}", f.path));
+            recover_note(ui, DIM, &format!("Adresse: {}", f.address));
+        }
+        None => {
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new("Nichts gefunden")
+                        .color(WARN)
+                        .size(20.0)
+                        .strong(),
+                );
+            });
+            ui.add_space(14.0);
+            recover_note(
+                ui,
+                DIM,
+                "Mit dieser Angabe lässt sich die Seed nicht rekonstruieren. Prüf die \
+                 Adresse und die Wörter — oder probier einen anderen Fall (falsches Wort, \
+                 vertauscht).",
+            );
+        }
+    }
+
+    ui.add_space(20.0);
+    ui.vertical_centered(|ui| {
+        if ui
+            .add(
+                egui::Button::new(
+                    RichText::new("Neue Suche")
+                        .color(Color32::BLACK)
+                        .size(13.0)
+                        .strong(),
+                )
+                .fill(PRIMARY)
+                .rounding(Rounding::same(8.0))
+                .min_size(Vec2::new(180.0, 36.0)),
+            )
+            .clicked()
+        {
+            r.words.clear();
+            r.address.clear();
+            r.acknowledged = false;
+            r.phase = crate::recover_ui::Phase::Editing;
+        }
+    });
+    ui.add_space(20.0);
+}
+
 /// Vertical space a [`card`] spends on itself before any content: both inner
 /// margins, the title line, the gap under it, and the stroke on both edges.
 /// Callers that hand a card an exact height have to subtract it.
@@ -657,6 +1156,10 @@ impl eframe::App for GuiApp {
 
         if self.shot_path.is_some() && std::env::var("SC_SHOT_INTRO").is_ok() {
             self.draw_intro(ctx);
+        } else if self.recover.is_some() {
+            // The recovery screen owns the whole window; the search behind it
+            // keeps running regardless, so nothing about the dashboard stops.
+            self.draw_recover(ctx);
         } else if self.shot_path.is_some() && std::env::var("SC_SHOT_LOADING").is_err() {
             self.draw_dashboard(ctx);
         } else if loading {
@@ -760,6 +1263,100 @@ impl GuiApp {
             });
     }
 
+    /// The seed-recovery screen. Owns the whole window while open.
+    ///
+    /// The state lives in [`crate::recover_ui`]; this only draws it. The search
+    /// runs on its own thread, so every frame polls for its result and, while
+    /// it runs, asks for a repaint to keep the progress bar moving.
+    fn draw_recover(&mut self, ctx: &egui::Context) {
+        use crate::recover_ui::Phase;
+
+        let mut r = match self.recover.take() {
+            Some(r) => r,
+            None => return,
+        };
+        r.poll();
+        if matches!(r.phase, Phase::Running { .. }) {
+            ctx.request_repaint_after(Duration::from_millis(80));
+        }
+        let logo = self.logo_texture(ctx);
+        let depth = self.control.addresses_per_path().max(20);
+
+        // Set false to close the screen; set to restart with a blank form.
+        let mut keep_open = true;
+
+        egui::TopBottomPanel::top("recover_head")
+            .frame(
+                egui::Frame::none()
+                    .fill(BG)
+                    .inner_margin(egui::Margin::symmetric(16.0, 12.0)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(egui::Image::new(&logo).fit_to_exact_size(Vec2::splat(30.0)));
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("SEED WIEDERHERSTELLEN")
+                            .color(TEXT)
+                            .size(15.0)
+                            .strong(),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("Zurück zur Suche").color(DIM).size(12.5),
+                                )
+                                .fill(PANEL)
+                                .stroke(Stroke::new(1.0_f32, FRAME))
+                                .rounding(Rounding::same(7.0))
+                                .min_size(Vec2::new(0.0, 30.0)),
+                            )
+                            .clicked()
+                        {
+                            keep_open = false;
+                        }
+                    });
+                });
+            });
+
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::none()
+                    .fill(BG)
+                    .inner_margin(egui::Margin::symmetric(16.0, 10.0)),
+            )
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        // A comfortable reading column, centred.
+                        let width = ui.available_width().min(680.0);
+                        let pad = (ui.available_width() - width) / 2.0;
+                        ui.horizontal(|ui| {
+                            ui.add_space(pad.max(0.0));
+                            ui.vertical(|ui| {
+                                ui.set_width(width);
+                                match &r.phase {
+                                    Phase::Editing => {
+                                        recover_form(ui, &mut r, &mut keep_open, depth)
+                                    }
+                                    Phase::Running { .. } => recover_running(ui, &mut r),
+                                    Phase::Done(_) => recover_done(ui, &mut r, &mut keep_open),
+                                }
+                            });
+                        });
+                    });
+            });
+
+        if keep_open {
+            self.recover = Some(r);
+        } else {
+            // Stop any running search before dropping the state.
+            r.cancel();
+        }
+    }
+
     fn draw_dashboard(&mut self, ctx: &egui::Context) {
         let seeds = self.stats.seeds();
         let addresses = self.stats.addresses();
@@ -829,6 +1426,22 @@ impl GuiApp {
                             .clicked()
                         {
                             self.settings_open = !self.settings_open;
+                        }
+                        ui.add_space(8.0);
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("Seed retten").color(TEXT).size(12.5),
+                                )
+                                .fill(PANEL)
+                                .stroke(Stroke::new(1.0_f32, FRAME))
+                                .rounding(Rounding::same(7.0))
+                                .min_size(Vec2::new(112.0, 30.0)),
+                            )
+                            .on_hover_text("Eine eigene Seed wiederherstellen, der ein Wort fehlt")
+                            .clicked()
+                        {
+                            self.recover = Some(crate::recover_ui::RecoverUi::default());
                         }
                     });
                 });

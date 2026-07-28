@@ -525,7 +525,7 @@ fn run_recover(
     // A rough per-candidate cost: the checksum-fail path is a SHA-256, the
     // pass path adds PBKDF2 and derivation. Measured on an M1; an over-estimate
     // elsewhere, which is the safe direction for a promise about time.
-    let secs = plan.estimate_secs(0.09e-6, 2.5e-3);
+    let secs = plan.estimate_secs();
 
     println!();
     println!("  WIEDERHERSTELLUNG DER EIGENEN SEED");

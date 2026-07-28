@@ -56,19 +56,27 @@ pub struct Plan {
 }
 
 /// A found seed.
+#[derive(Clone)]
 pub struct Found {
     pub mnemonic: String,
     pub address: String,
     pub path: String,
 }
 
-impl Plan {
-    /// Parses the words, the target address and the mode into a job.
-    ///
-    /// `words` is whitespace-separated, with `?` for a blank. Blanks are only
-    /// meaningful in [`Mode::Missing`]; the other modes reject them, since a
-    /// missing word and a wrong word are different problems.
-    pub fn new(words: &str, target: &str, mode: Mode, depth: u32) -> Result<Plan, String> {
+/// The words half of a job: everything checkable before an address is given.
+///
+/// Split out so the window can show the search space and any input error while
+/// the address field is still empty, rather than staying silent until the
+/// whole form is filled.
+pub struct Words {
+    parsed: Vec<Option<u16>>,
+    pub word_count: WordCount,
+    pub mode: Mode,
+}
+
+impl Words {
+    /// Parses and checks the words for a mode, without an address.
+    pub fn parse(words: &str, mode: Mode) -> Result<Words, String> {
         let tokens: Vec<&str> = words.split_whitespace().collect();
         let word_count = WordCount::from_words(tokens.len() as u8).ok_or_else(|| {
             format!(
@@ -110,13 +118,61 @@ impl Plan {
             _ => {}
         }
 
+        Ok(Words {
+            parsed,
+            word_count,
+            mode,
+        })
+    }
+
+    /// Candidate count for these words alone — same figure [`Plan`] reports.
+    pub fn candidate_count(&self) -> u64 {
+        candidate_count(self.mode, &self.parsed)
+    }
+}
+
+/// Seconds a search of `candidates` mnemonics is expected to take.
+///
+/// The checksum-fail path is a single SHA-256; the fraction that pass add
+/// PBKDF2 and derivation. Both costs were measured on an M1, and the estimate
+/// is deliberately high — better to promise ten minutes and finish in two.
+/// Shared by the terminal command and the window so they agree.
+pub fn estimate_secs(candidates: u64, wc: WordCount) -> f64 {
+    const CHEAP_PER: f64 = 0.09e-6;
+    const DERIVE_PER: f64 = 2.5e-3;
+    let total = candidates as f64;
+    let pass_fraction = 1.0 / 2f64.powi(wc.checksum_bits() as i32);
+    total * CHEAP_PER + total * pass_fraction * DERIVE_PER
+}
+
+/// Shared by [`Words`] and [`Plan`]: the size of the space before the checksum.
+fn candidate_count(mode: Mode, words: &[Option<u16>]) -> u64 {
+    match mode {
+        Mode::Missing => {
+            let blanks = words.iter().filter(|w| w.is_none()).count() as u32;
+            2048u64.saturating_pow(blanks)
+        }
+        Mode::Typo => words.len() as u64 * 2048,
+        Mode::Swap => words.len().saturating_sub(1) as u64,
+    }
+}
+
+impl Plan {
+    /// Parses the words, the target address and the mode into a job.
+    ///
+    /// `words` is whitespace-separated, with `?` for a blank. Blanks are only
+    /// meaningful in [`Mode::Missing`]; the other modes reject them, since a
+    /// missing word and a wrong word are different problems.
+    pub fn new(words: &str, target: &str, mode: Mode, depth: u32) -> Result<Plan, String> {
+        let checked = Words::parse(words, mode)?;
+
         let (target_kind, target) =
             decode(target.trim()).ok_or("die Zieladresse ist keine gültige Bitcoin-Adresse")?;
 
         Ok(Plan {
             mode,
-            words: parsed,
-            word_count,
+            words: checked.parsed,
+            word_count: checked.word_count,
             target,
             target_kind,
             target_str: target.iter().map(|b| format!("{b:02x}")).collect(),
@@ -129,28 +185,12 @@ impl Plan {
     /// Before the checksum, which is the honest number to warn on: it is what
     /// bounds the time, even though only a fraction reach derivation.
     pub fn candidate_count(&self) -> u64 {
-        match self.mode {
-            Mode::Missing => {
-                let blanks = self.words.iter().filter(|w| w.is_none()).count() as u32;
-                2048u64.saturating_pow(blanks)
-            }
-            // Every position, every word — including the word already there,
-            // which is cheap and keeps the count a clean n·2048.
-            Mode::Typo => self.words.len() as u64 * 2048,
-            Mode::Swap => self.words.len().saturating_sub(1) as u64,
-        }
+        candidate_count(self.mode, &self.words)
     }
 
-    /// Seconds the search is expected to take at a measured per-candidate cost.
-    ///
-    /// The estimate multiplies the whole candidate count by the checksum-fail
-    /// cost, then adds the derivation cost for the fraction that pass. It is
-    /// deliberately an over-estimate: better to promise ten minutes and finish
-    /// in two than the reverse.
-    pub fn estimate_secs(&self, cheap_per: f64, derive_per: f64) -> f64 {
-        let total = self.candidate_count() as f64;
-        let pass_fraction = 1.0 / 2f64.powi(self.word_count.checksum_bits() as i32);
-        total * cheap_per + total * pass_fraction * derive_per
+    /// Seconds the search is expected to take. See [`estimate_secs`].
+    pub fn estimate_secs(&self) -> f64 {
+        estimate_secs(self.candidate_count(), self.word_count)
     }
 
     /// Runs the search, calling `progress` with the running candidate count and

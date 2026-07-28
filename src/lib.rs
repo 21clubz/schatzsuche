@@ -23,6 +23,7 @@ pub mod icon_data;
 pub mod lookup;
 pub mod machine;
 pub mod recover;
+pub mod recover_ui;
 pub mod startup;
 pub mod stats;
 pub mod tui;
