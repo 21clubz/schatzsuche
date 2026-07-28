@@ -33,6 +33,11 @@ use crate::deriver::external_chain;
 /// laptop checks them; past it, recovery is not the right tool.
 pub const MAX_CANDIDATES: u64 = 20_000_000_000;
 
+/// Without a target address the search cannot pick the right seed, so it lists
+/// every checksum-valid one. That is only useful when there are few; past this
+/// many *expected* valid seeds, an address is required.
+pub const MAX_LISTED: u64 = 30;
+
 /// The state of one word in the seed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -135,23 +140,35 @@ impl Layout {
     pub fn is_trivial(&self) -> bool {
         self.candidate_count() <= 1
     }
+
+    /// Roughly how many candidates will pass the checksum. Without a target
+    /// address these are all listed, so this is what decides whether an
+    /// address is needed.
+    pub fn expected_valid(&self) -> u64 {
+        let bits = self.word_count.checksum_bits();
+        (self.candidate_count() >> bits).max(1)
+    }
 }
 
 fn factorial(n: u64) -> u64 {
     (1..=n).product::<u64>().max(1)
 }
 
-/// A recovery job: a [`Layout`] plus the address it must produce.
+/// A recovery job: a [`Layout`] and, optionally, the address it must produce.
+///
+/// With a target the search returns the one seed that owns it. Without, it
+/// lists every checksum-valid seed — useful only when there are few, which is
+/// why an address is required past [`MAX_LISTED`] expected ones.
 pub struct Plan {
     base: Vec<Option<u16>>,
     swaps: Vec<Vec<usize>>,
     pub word_count: WordCount,
-    target: [u8; 20],
-    target_kind: Kind,
+    target: Option<(Kind, [u8; 20])>,
     pub depth: u32,
 }
 
-/// A found seed.
+/// A found seed. Without a target address, `address` is the wallet's first
+/// native-SegWit receive address, shown so the owner can recognise it.
 #[derive(Clone)]
 pub struct Found {
     pub mnemonic: String,
@@ -159,8 +176,15 @@ pub struct Found {
     pub path: String,
 }
 
+/// The result of a run: the seeds found, and whether the list was cut short.
+pub struct Outcome {
+    pub hits: Vec<Found>,
+    /// Set when, without an address, more valid seeds existed than were listed.
+    pub truncated: bool,
+}
+
 impl Plan {
-    /// Combines a layout with a target address.
+    /// Combines a layout with an optional target address (empty string = none).
     pub fn new(layout: Layout, target: &str, depth: u32) -> Result<Plan, String> {
         let count = layout.candidate_count();
         if count <= 1 {
@@ -177,15 +201,29 @@ impl Plan {
                 crate::util::group_digits(count)
             ));
         }
-        let (target_kind, target) =
-            decode(target.trim()).ok_or("die Zieladresse ist keine gültige Bitcoin-Adresse")?;
+
+        let trimmed = target.trim();
+        let target = if trimmed.is_empty() {
+            // Without an address the answer is a list; keep it usable.
+            let bits = layout.word_count.checksum_bits();
+            let expected = (count >> bits).max(1);
+            if expected > MAX_LISTED {
+                return Err(format!(
+                    "ohne Adresse gäbe es etwa {expected} mögliche Seeds — zu viele zum \
+                     Auflisten. Trag eine Adresse deiner Wallet ein, dann bleibt genau die \
+                     richtige übrig."
+                ));
+            }
+            None
+        } else {
+            Some(decode(trimmed).ok_or("die Zieladresse ist keine gültige Bitcoin-Adresse")?)
+        };
 
         Ok(Plan {
             base: layout.base,
             swaps: layout.swaps,
             word_count: layout.word_count,
             target,
-            target_kind,
             depth,
         })
     }
@@ -205,21 +243,15 @@ impl Plan {
     }
 
     /// Runs the search on the calling thread, reporting progress through
-    /// `counter` and stopping when `cancel` is set. Returns the first seed
-    /// that hits the target, or `None`.
-    pub fn run(&self, cancel: &Arc<AtomicBool>, counter: &Arc<AtomicU64>) -> Option<Found> {
+    /// `counter` and stopping when `cancel` is set.
+    ///
+    /// With a target address the outcome holds the one matching seed, if any.
+    /// Without, it holds every checksum-valid seed up to [`MAX_LISTED`].
+    pub fn run(&self, cancel: &Arc<AtomicBool>, counter: &Arc<AtomicU64>) -> Outcome {
         let mut engine = Engine::new(self);
+        let want_all = self.target.is_none();
+        let mut hits: Vec<Found> = Vec::new();
         let mut done = 0u64;
-        let mut check = move |indices: &[u16]| -> Option<Found> {
-            done += 1;
-            if done.is_multiple_of(4096) {
-                counter.store(done, Ordering::Relaxed);
-                if cancel.load(Ordering::Relaxed) {
-                    return None;
-                }
-            }
-            engine.try_candidate(indices)
-        };
 
         // The search dimensions: each free position, then each swap run with
         // its precomputed orderings. A run's positions carry their base word.
@@ -233,35 +265,56 @@ impl Plan {
             let vals: Vec<u16> = run.iter().map(|&i| self.base[i].unwrap()).collect();
             dims.push(Dim::Swap(run.clone(), permutations(&vals)));
         }
-
         let mut buf: Vec<u16> = self.base.iter().map(|w| w.unwrap_or(0)).collect();
-        recurse(&dims, 0, &mut buf, cancel, &mut check)
+
+        {
+            // Returns true to stop the walk: on a target hit, on the list cap,
+            // or on cancel.
+            let mut check = |indices: &[u16]| -> bool {
+                done += 1;
+                if done.is_multiple_of(4096) {
+                    counter.store(done, Ordering::Relaxed);
+                    if cancel.load(Ordering::Relaxed) {
+                        return true;
+                    }
+                }
+                if let Some(f) = engine.try_candidate(indices) {
+                    hits.push(f);
+                    if !want_all || hits.len() as u64 > MAX_LISTED {
+                        return true;
+                    }
+                }
+                false
+            };
+            recurse(&dims, 0, &mut buf, &mut check);
+        }
+
+        // One over the cap means "there were more"; trim it back to the cap.
+        let truncated = want_all && hits.len() as u64 > MAX_LISTED;
+        if truncated {
+            hits.truncate(MAX_LISTED as usize);
+        }
+        Outcome { hits, truncated }
     }
 }
 
 /// Walks the search dimensions, calling `check` at each full combination.
+/// `check` returns true to stop the whole walk.
 fn recurse(
     dims: &[Dim],
     depth: usize,
     buf: &mut [u16],
-    cancel: &Arc<AtomicBool>,
-    check: &mut impl FnMut(&[u16]) -> Option<Found>,
-) -> Option<Found> {
+    check: &mut impl FnMut(&[u16]) -> bool,
+) -> bool {
     if depth == dims.len() {
         return check(buf);
-    }
-    if cancel.load(Ordering::Relaxed) {
-        return None;
     }
     match &dims[depth] {
         Dim::Free(pos) => {
             for w in 0..2048u16 {
                 buf[*pos] = w;
-                if let Some(f) = recurse(dims, depth + 1, buf, cancel, check) {
-                    return Some(f);
-                }
-                if cancel.load(Ordering::Relaxed) {
-                    return None;
+                if recurse(dims, depth + 1, buf, check) {
+                    return true;
                 }
             }
         }
@@ -270,16 +323,13 @@ fn recurse(
                 for (slot, &val) in positions.iter().zip(order) {
                     buf[*slot] = val;
                 }
-                if let Some(f) = recurse(dims, depth + 1, buf, cancel, check) {
-                    return Some(f);
-                }
-                if cancel.load(Ordering::Relaxed) {
-                    return None;
+                if recurse(dims, depth + 1, buf, check) {
+                    return true;
                 }
             }
         }
     }
-    None
+    false
 }
 
 /// The search dimensions of a run, used only inside [`Plan::run`].
@@ -346,11 +396,17 @@ const PURPOSES: [(u32, Kind); 3] = [(44, Kind::P2pkh), (49, Kind::P2sh), (84, Ki
 
 impl<'p> Engine<'p> {
     fn new(plan: &'p Plan) -> Engine<'p> {
-        let purposes = PURPOSES
-            .iter()
-            .filter(|(_, kind)| *kind == plan.target_kind)
-            .map(|(purpose, _)| *purpose)
-            .collect();
+        // With a target, only the purpose that produces its script kind can
+        // match. Without one, try all three and report the modern (BIP-84)
+        // receive address for the owner to recognise.
+        let purposes: Vec<u32> = match plan.target {
+            Some((kind, _)) => PURPOSES
+                .iter()
+                .filter(|(_, k)| *k == kind)
+                .map(|(p, _)| *p)
+                .collect(),
+            None => vec![84],
+        };
         Engine {
             plan,
             pbkdf2: Pbkdf2Ctx::new(),
@@ -362,7 +418,11 @@ impl<'p> Engine<'p> {
         }
     }
 
-    /// Checks one candidate: checksum first, then derivation, then the address.
+    /// Checks one candidate: checksum first, then derivation.
+    ///
+    /// With a target, returns the seed only if some derived address matches it.
+    /// Without a target, every checksum-valid seed is a hit, tagged with its
+    /// first native-SegWit address.
     fn try_candidate(&mut self, indices: &[u16]) -> Option<Found> {
         indices_to_entropy(indices, self.plan.word_count)?;
 
@@ -383,16 +443,24 @@ impl<'p> Engine<'p> {
                 Some(c) => c,
                 None => continue,
             };
+            let kind = PURPOSES.iter().find(|(p, _)| *p == purpose).unwrap().1;
             for i in 0..self.plan.depth {
                 let pk = match chain.child_pubkey(&self.secp, i, &mut self.buf) {
                     Some(p) => p,
                     None => continue,
                 };
                 let hashes = script_hashes(&pk);
-                if hashes[self.plan.target_kind as usize] == self.plan.target {
+                let addr = &hashes[kind as usize];
+                let matched = match self.plan.target {
+                    Some((tk, ref t)) => tk == kind && addr == t,
+                    // No target: the first address of the first purpose is the
+                    // one to show; take it and stop.
+                    None => i == 0,
+                };
+                if matched {
                     return Some(Found {
                         mnemonic: self.mnemonic.clone(),
-                        address: crate::address::encode(self.plan.target_kind, &self.plan.target),
+                        address: crate::address::encode(kind, addr),
                         path: format!("m/{purpose}'/0'/0'/0/{i}"),
                     });
                 }
@@ -403,7 +471,7 @@ impl<'p> Engine<'p> {
 }
 
 /// Type alias so [`crate::recover_ui`] can hold a search result channel.
-pub type ResultRx = Receiver<Option<Found>>;
+pub type ResultRx = Receiver<Outcome>;
 
 #[cfg(test)]
 mod tests {
@@ -419,11 +487,15 @@ mod tests {
     /// The address of that seed at m/84'/0'/0'/0/0.
     const TARGET: &str = "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu";
 
-    fn run(layout: Layout) -> Option<Found> {
-        let plan = Plan::new(layout, TARGET, 2).unwrap();
+    fn run_with(layout: Layout, target: &str) -> Outcome {
+        let plan = Plan::new(layout, target, 2).unwrap();
         let cancel = Arc::new(AtomicBool::new(false));
         let counter = Arc::new(AtomicU64::new(0));
         plan.run(&cancel, &counter)
+    }
+
+    fn run(layout: Layout) -> Option<Found> {
+        run_with(layout, TARGET).hits.into_iter().next()
     }
 
     #[test]
@@ -453,6 +525,44 @@ mod tests {
         states[4] = State::Moved;
         states[5] = State::Moved;
         assert!(run(Layout::build(&words, &states).unwrap()).is_some());
+    }
+
+    #[test]
+    fn without_an_address_it_lists_the_valid_seeds() {
+        // One missing word in a 24-word seed: 8 checksum-valid candidates.
+        let mut m = String::new();
+        entropy_to_mnemonic(&[0u8; 32], WordCount::W24, &mut m);
+        let mut words: Vec<String> = m.split_whitespace().map(str::to_string).collect();
+        let mut states = vec![State::Sure; 24];
+        words[23].clear();
+        states[23] = State::Unsure;
+
+        let layout = Layout::build(&words, &states).unwrap();
+        let out = run_with(layout, "");
+        assert!(!out.hits.is_empty(), "no candidates listed");
+        assert!(out.hits.len() <= MAX_LISTED as usize);
+        // The real seed (…, "art") must be among them.
+        assert!(out
+            .hits
+            .iter()
+            .any(|f| f.mnemonic.split_whitespace().last() == Some("art")));
+        // Every listing carries a first address to compare against.
+        assert!(out.hits.iter().all(|f| f.address.starts_with("bc1")));
+    }
+
+    #[test]
+    fn without_an_address_too_many_is_refused() {
+        // Two missing words in a 12-word seed: far more than can be listed.
+        let words = abandon_words();
+        let mut states = vec![State::Sure; 12];
+        states[0] = State::Unsure;
+        states[1] = State::Unsure;
+        let layout = Layout::build(&words, &states).unwrap();
+        let err = match Plan::new(layout, "", 2) {
+            Err(e) => e,
+            Ok(_) => panic!("expected an error"),
+        };
+        assert!(err.contains("ohne Adresse"), "{err}");
     }
 
     #[test]

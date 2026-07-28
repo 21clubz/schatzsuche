@@ -653,21 +653,26 @@ fn recover_form(
 
     ui.add_space(16.0);
 
-    // Step 3 — the target.
+    // Step 3 — the target (optional).
+    let addr_required = r.address_required();
     step_badge(ui, 3, "Eine Adresse deiner Wallet");
     ui.add_space(6.0);
     ui.label(
-        RichText::new(
-            "Eine Empfangsadresse, von der du sicher weißt, dass sie zu dieser Wallet gehört.",
-        )
-        .color(DIM)
+        RichText::new(if addr_required {
+            "Hier gibt es zu viele Möglichkeiten für eine Liste — trag eine Empfangsadresse \
+             ein, dann bleibt genau die richtige Seed übrig."
+        } else {
+            "Optional. Mit Adresse bekommst du genau eine Seed; ohne bekommst du alle, die \
+             passen könnten, zum Vergleichen."
+        })
+        .color(if addr_required { WARN } else { DIM })
         .size(11.5),
     );
     ui.add_space(6.0);
     ui.add(
         egui::TextEdit::singleline(&mut r.address)
             .desired_width(f32::INFINITY)
-            .hint_text("bc1q…  oder  1…  oder  3…")
+            .hint_text("bc1q…  oder  1…  oder  3…  (optional)")
             .font(mono(13.0)),
     );
 
@@ -751,10 +756,9 @@ fn recover_form(
         .rounding(Rounding::same(8.0))
         .min_size(Vec2::new(ui.available_width(), 40.0));
     if ui.add_enabled(ready, btn).clicked() {
-        // can_start already validated the plan; if it somehow fails, show the
-        // reason rather than panicking a search screen.
+        // can_start already validated the plan; if it somehow fails, stay put
+        // and log rather than panicking a search screen.
         if let Err(e) = r.start(depth) {
-            r.phase = crate::recover_ui::Phase::Done(None);
             eprintln!("recovery start failed: {e}");
         }
     }
@@ -765,12 +769,34 @@ fn recover_form(
                 "Markiere mindestens ein Wort als unbekannt, unsicher oder verrutscht."
             }
             Preview::Invalid(_) => "Ein Wort stimmt noch nicht — siehe Hinweis oben.",
-            Preview::Ready { .. } if r.address.trim().is_empty() => "Es fehlt noch eine Adresse.",
+            Preview::Ready { .. } if r.address_required() => {
+                "Bei so vielen Möglichkeiten brauchst du eine Adresse — siehe oben."
+            }
             Preview::Ready { .. } => "Setz den Haken oben, dann geht es los.",
         };
         ui.label(RichText::new(why).color(MUTED).size(11.5));
     }
     ui.add_space(20.0);
+}
+
+/// One seed shown as words on a numbered grid.
+fn seed_grid(ui: &mut Ui, id: &str, mnemonic: &str) {
+    let words: Vec<&str> = mnemonic.split_whitespace().collect();
+    egui::Grid::new(id)
+        .num_columns(3)
+        .spacing(Vec2::new(22.0, 7.0))
+        .show(ui, |ui| {
+            for (i, w) in words.iter().enumerate() {
+                ui.label(
+                    RichText::new(format!("{:>2}. {}", i + 1, w))
+                        .color(TEXT)
+                        .font(mono(13.5)),
+                );
+                if (i + 1) % 3 == 0 {
+                    ui.end_row();
+                }
+            }
+        });
 }
 
 /// The legend that explains the four word states by colour.
@@ -905,79 +931,98 @@ fn recover_running(ui: &mut Ui, r: &mut crate::recover_ui::RecoverUi) {
     });
 }
 
-/// The result screen: the found seed, or nothing.
+/// The result screen: the one seed, a short list of possibles, or nothing.
 fn recover_done(ui: &mut Ui, r: &mut crate::recover_ui::RecoverUi, _keep_open: &mut bool) {
     use crate::recover_ui::Phase;
-    let found = match &r.phase {
-        Phase::Done(f) => f.clone(),
-        _ => None,
+    let (hits, truncated) = match &r.phase {
+        Phase::Done(o) => (o.hits.clone(), o.truncated),
+        _ => (Vec::new(), false),
     };
 
-    ui.add_space(30.0);
-    match found {
-        Some(f) => {
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    RichText::new("✓  Gefunden")
-                        .color(GREEN)
-                        .size(22.0)
-                        .strong(),
-                );
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new("Schreib die Wörter jetzt auf Papier. Nirgends sonst.")
-                        .color(DIM)
-                        .size(12.5),
-                );
+    ui.add_space(24.0);
+    if hits.is_empty() {
+        ui.vertical_centered(|ui| {
+            ui.label(
+                RichText::new("Nichts gefunden")
+                    .color(WARN)
+                    .size(20.0)
+                    .strong(),
+            );
+        });
+        ui.add_space(14.0);
+        recover_note(
+            ui,
+            DIM,
+            "Mit dieser Angabe lässt sich die Seed nicht rekonstruieren. Prüf die \
+             Adresse und die Wörter — oder markiere mehr davon als unsicher.",
+        );
+    } else if hits.len() == 1 {
+        let f = &hits[0];
+        ui.vertical_centered(|ui| {
+            ui.label(RichText::new("Gefunden!").color(GREEN).size(24.0).strong());
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new("Schreib die Wörter jetzt auf Papier. Nirgends sonst.")
+                    .color(DIM)
+                    .size(12.5),
+            );
+        });
+        ui.add_space(20.0);
+        egui::Frame::none()
+            .fill(Color32::from_rgb(20, 30, 24))
+            .rounding(Rounding::same(10.0))
+            .stroke(Stroke::new(1.0_f32, GREEN))
+            .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                seed_grid(ui, "seed_words", &f.mnemonic);
             });
-            ui.add_space(20.0);
-
-            // The words, numbered on a grid so they are easy to copy by hand.
-            egui::Frame::none()
-                .fill(Color32::from_rgb(20, 30, 24))
-                .rounding(Rounding::same(10.0))
-                .stroke(Stroke::new(1.0_f32, GREEN))
-                .inner_margin(egui::Margin::symmetric(16.0, 14.0))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    let words: Vec<&str> = f.mnemonic.split_whitespace().collect();
-                    egui::Grid::new("seed_words")
-                        .num_columns(3)
-                        .spacing(Vec2::new(24.0, 8.0))
-                        .show(ui, |ui| {
-                            for (i, w) in words.iter().enumerate() {
-                                ui.label(
-                                    RichText::new(format!("{:>2}. {}", i + 1, w))
-                                        .color(TEXT)
-                                        .font(mono(14.0)),
-                                );
-                                if (i + 1) % 3 == 0 {
-                                    ui.end_row();
-                                }
-                            }
-                        });
-                });
-            ui.add_space(12.0);
-            recover_note(ui, DIM, &format!("Pfad: {}", f.path));
-            recover_note(ui, DIM, &format!("Adresse: {}", f.address));
-        }
-        None => {
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    RichText::new("Nichts gefunden")
-                        .color(WARN)
-                        .size(20.0)
-                        .strong(),
-                );
-            });
-            ui.add_space(14.0);
+        ui.add_space(12.0);
+        recover_note(ui, DIM, &format!("Pfad: {}", f.path));
+        recover_note(ui, DIM, &format!("Adresse: {}", f.address));
+    } else {
+        // No target address was given, so several seeds are mathematically
+        // valid. The owner picks theirs by the first address, or tries them.
+        ui.vertical_centered(|ui| {
+            ui.label(
+                RichText::new(format!("{} mögliche Seeds", hits.len()))
+                    .color(GREEN)
+                    .size(22.0)
+                    .strong(),
+            );
+        });
+        ui.add_space(6.0);
+        recover_note(
+            ui,
+            DIM,
+            "Ohne Adresse kann das Programm die richtige nicht auswählen. Vergleich die \
+             erste Adresse jeder Seed mit deiner Wallet — oder gib oben eine Adresse an, \
+             dann bleibt genau eine übrig.",
+        );
+        if truncated {
             recover_note(
                 ui,
-                DIM,
-                "Mit dieser Angabe lässt sich die Seed nicht rekonstruieren. Prüf die \
-                 Adresse und die Wörter — oder probier einen anderen Fall (falsches Wort, \
-                 vertauscht).",
+                WARN,
+                "Es gibt noch mehr als die hier gezeigten. Grenze mit einer Adresse ein.",
             );
+        }
+        ui.add_space(10.0);
+        for (n, f) in hits.iter().enumerate() {
+            egui::Frame::none()
+                .fill(PANEL)
+                .rounding(Rounding::same(8.0))
+                .stroke(Stroke::new(1.0_f32, FRAME))
+                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("#{}", n + 1)).color(MUTED).size(11.5));
+                        ui.label(RichText::new(&f.address).color(PRIMARY).font(mono(12.0)));
+                    });
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(&f.mnemonic).color(TEXT).font(mono(12.5)));
+                });
+            ui.add_space(6.0);
         }
     }
 

@@ -135,8 +135,9 @@ enum Command {
         /// might be wrong — e.g. "legal winner ? year wave*".
         #[arg(long)]
         words: String,
-        /// An address the wallet is known to own — the search target.
-        #[arg(long)]
+        /// An address the wallet owns. Optional: without it every matching
+        /// seed is listed, which only works when there are few.
+        #[arg(long, default_value = "")]
         address: String,
         /// Addresses to derive per path before moving on. Raise it if the
         /// wallet used addresses past the first.
@@ -589,31 +590,41 @@ fn run_recover(words: &str, address: &str, depth: u32, yes: bool) -> Result<(), 
         })
     };
 
-    let found = plan.run(&cancel, &counter);
+    let outcome = plan.run(&cancel, &counter);
     cancel.store(true, Ordering::Relaxed);
     ticker.join().ok();
     println!();
 
-    match found {
-        Some(f) => {
-            println!();
-            println!("  ✓ GEFUNDEN");
-            println!("  Adresse : {}", f.address);
-            println!("  Pfad    : {}", f.path);
-            println!("  Wörter  : {}", f.mnemonic);
-            println!();
-            println!("  Schreib die Wörter jetzt auf Papier. Schließ das Terminal, wenn");
-            println!("  du fertig bist — sie stehen oben im Klartext.");
-            Ok(())
+    if outcome.hits.is_empty() {
+        println!();
+        println!("  Nichts gefunden. Die Seed lässt sich mit dieser Angabe nicht");
+        println!("  rekonstruieren. Prüfe die Wörter und die Adresse, oder markiere");
+        println!("  mehr Wörter mit einem * als unsicher.");
+    } else if outcome.hits.len() == 1 {
+        let f = &outcome.hits[0];
+        println!();
+        println!("  ✓ GEFUNDEN");
+        println!("  Adresse : {}", f.address);
+        println!("  Pfad    : {}", f.path);
+        println!("  Wörter  : {}", f.mnemonic);
+        println!();
+        println!("  Schreib die Wörter jetzt auf Papier. Schließ das Terminal, wenn");
+        println!("  du fertig bist — sie stehen oben im Klartext.");
+    } else {
+        println!();
+        println!("  {} mögliche Seeds (ohne Adresse):", outcome.hits.len());
+        println!("  Vergleich die erste Adresse mit deiner Wallet.");
+        println!();
+        for (n, f) in outcome.hits.iter().enumerate() {
+            println!("  #{:<2} {}", n + 1, f.address);
+            println!("      {}", f.mnemonic);
         }
-        None => {
+        if outcome.truncated {
             println!();
-            println!("  Nichts gefunden. Die Seed lässt sich mit dieser Angabe nicht");
-            println!("  rekonstruieren. Prüfe die Zieladresse und die Wörter, oder");
-            println!("  probier einen anderen Modus (--mode typo, --mode swap).");
-            Ok(())
+            println!("  … und weitere. Grenze mit --address ein.");
         }
     }
+    Ok(())
 }
 
 /// A duration in words, from seconds. Rough on purpose.

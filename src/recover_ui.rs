@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::bip39::WordCount;
-use crate::recover::{estimate_secs, Found, Layout, Plan, ResultRx, State};
+use crate::recover::{estimate_secs, Layout, Outcome, Plan, ResultRx, State, MAX_LISTED};
 
 /// Where the recovery screen is in its flow.
 pub enum Phase {
@@ -24,8 +24,8 @@ pub enum Phase {
         started: Instant,
         result: ResultRx,
     },
-    /// Finished: the seed, or nothing.
-    Done(Option<Found>),
+    /// Finished: the seeds found (empty if none).
+    Done(Outcome),
 }
 
 /// One word slot the user edits: the text, and what they know about it.
@@ -119,12 +119,32 @@ impl RecoverUi {
         }
     }
 
-    /// Whether Start should be live: something to search, a non-empty address,
-    /// and the risk acknowledged.
+    /// How many seeds an addressless search would list, if the words are valid
+    /// and searchable. `None` when there is nothing to search.
+    pub fn expected_without_address(&self) -> Option<u64> {
+        match Layout::build(&self.words(), &self.states()) {
+            Ok(l) if !l.is_trivial() => Some(l.expected_valid()),
+            _ => None,
+        }
+    }
+
+    /// True when the address field must be filled: the words describe a real,
+    /// runnable search, but without an address it would list too many seeds.
+    /// False in the blank or oversized states, where the address is moot.
+    pub fn address_required(&self) -> bool {
+        matches!(self.preview(), Preview::Ready { .. })
+            && self.address.trim().is_empty()
+            && self
+                .expected_without_address()
+                .is_some_and(|n| n > MAX_LISTED)
+    }
+
+    /// Whether Start should be live: something to search, the risk
+    /// acknowledged, and — only if the space is large — an address.
     pub fn can_start(&self) -> bool {
         self.acknowledged
-            && !self.address.trim().is_empty()
             && matches!(self.preview(), Preview::Ready { .. })
+            && !self.address_required()
     }
 
     /// Builds the plan and spawns the search. On a bad plan the phase stays
@@ -158,8 +178,8 @@ impl RecoverUi {
     /// Called every frame while running: collects the result when it lands.
     pub fn poll(&mut self) {
         if let Phase::Running { result, .. } = &self.phase {
-            if let Ok(found) = result.try_recv() {
-                self.phase = Phase::Done(found);
+            if let Ok(outcome) = result.try_recv() {
+                self.phase = Phase::Done(outcome);
             }
         }
     }
@@ -209,17 +229,37 @@ mod tests {
     }
 
     #[test]
-    fn start_needs_all_three() {
+    fn one_missing_word_needs_only_the_checkbox() {
+        // A 12-word seed with one missing word lists 128 candidates without an
+        // address — too many — so here the address is what's required.
         let mut ui = RecoverUi::default();
         fill_abandon(&mut ui);
         ui.slots[11].word.clear();
         ui.slots[11].state = State::Unsure;
         assert!(matches!(ui.preview(), Preview::Ready { .. }));
-        assert!(!ui.can_start(), "no address, no ack");
-        ui.address = TARGET.into();
-        assert!(!ui.can_start(), "not acknowledged");
+        assert!(ui.address_required(), "128 candidates need an address");
+        assert!(!ui.can_start(), "not acknowledged, no address");
         ui.acknowledged = true;
+        assert!(!ui.can_start(), "still needs the address");
+        ui.address = TARGET.into();
         assert!(ui.can_start());
+    }
+
+    #[test]
+    fn a_small_space_can_run_without_an_address() {
+        // One missing word in a 24-word seed: 8 candidates, listable.
+        let mut ui = RecoverUi::default();
+        ui.resize(WordCount::W24);
+        let mut m = String::new();
+        entropy_to_mnemonic(&[0u8; 32], WordCount::W24, &mut m);
+        for (slot, w) in ui.slots.iter_mut().zip(m.split_whitespace()) {
+            slot.word = w.to_string();
+        }
+        ui.slots[23].word.clear();
+        ui.slots[23].state = State::Unsure;
+        assert!(!ui.address_required(), "8 seeds can be listed");
+        ui.acknowledged = true;
+        assert!(ui.can_start(), "no address needed for a small space");
     }
 
     #[test]
@@ -240,10 +280,11 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         match &ui.phase {
-            Phase::Done(Some(f)) => {
+            Phase::Done(out) => {
+                let f = out.hits.first().expect("no hit");
                 assert_eq!(f.mnemonic.split_whitespace().last().unwrap(), "about")
             }
-            _ => panic!("did not finish with a hit"),
+            _ => panic!("did not finish"),
         }
     }
 }
