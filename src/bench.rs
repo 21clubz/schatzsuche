@@ -39,7 +39,7 @@ fn fmt_time(s: f64) -> String {
 }
 
 pub fn run(n_addr: u32, word_count: WordCount) {
-    println!("seed-collider benchmark");
+    println!("Schatzsuche benchmark");
     println!("  mnemonic       : {} words", word_count.words());
     println!(
         "  addresses/path : {n_addr} (x3 paths = {} per seed)",

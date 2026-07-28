@@ -441,7 +441,7 @@ fn test_alert(cfg: &Config) -> Result<(), String> {
 
 /// Proves the two-stage lookup actually finds a known planted address.
 fn verify_lookup() -> Result<(), String> {
-    let dir = std::env::temp_dir().join("seed-collider-verify");
+    let dir = std::env::temp_dir().join("schatzsuche-verify");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("verify.scdb");
 

@@ -492,7 +492,7 @@ impl GuiApp {
 
                     ui.add_space(22.0);
                     ui.label(
-                        RichText::new("S E E D   C O L L I D E R")
+                        RichText::new("S C H A T Z S U C H E")
                             .color(tint(TEXT, alpha(0.25)))
                             .size(22.0)
                             .strong(),
@@ -1537,6 +1537,39 @@ mod tests {
                     < app.expected_share(t, Priority::Normal) * 0.7,
                 "background should be clearly slower at {t} cores"
             );
+        }
+    }
+
+    /// The previous name must not survive anywhere a user can see it.
+    ///
+    /// Renaming missed the letter-spaced wordmark on the intro screen and four
+    /// strings that go out in notifications, so this checks the sources rather
+    /// than trusting a search-and-replace. The needles are assembled from
+    /// fragments so this test does not match itself.
+    #[test]
+    fn the_old_name_is_gone() {
+        let needles = [
+            concat!("SE", "ED", " COLL", "IDER"),
+            concat!("S E", " E D"),
+            concat!("C O L", " L I D E R"),
+            concat!("seed", "-coll", "ider"),
+            concat!("Seed ", "Coll", "ider"),
+        ];
+        for (name, body) in [
+            ("gui.rs", include_str!("gui.rs")),
+            ("tui.rs", include_str!("tui.rs")),
+            ("alert/mod.rs", include_str!("alert/mod.rs")),
+            ("alert/channels.rs", include_str!("alert/channels.rs")),
+            ("bench.rs", include_str!("bench.rs")),
+            ("config.rs", include_str!("config.rs")),
+            ("main.rs", include_str!("main.rs")),
+        ] {
+            for needle in needles {
+                assert!(
+                    !body.contains(needle),
+                    "{name} still carries the old name {needle:?}"
+                );
+            }
         }
     }
 

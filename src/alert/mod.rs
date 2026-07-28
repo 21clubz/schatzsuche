@@ -100,7 +100,7 @@ impl AlertPayload {
             address: String::new(),
             balance_sats: 0,
             balance_btc: String::new(),
-            note: "seed-collider is still running.".to_string(),
+            note: "Schatzsuche läuft noch.".to_string(),
             seeds_tested: Some(seeds),
             uptime: Some(util::format_duration(uptime.as_secs())),
         }
@@ -108,9 +108,9 @@ impl AlertPayload {
 
     pub fn title(&self) -> String {
         match self.kind {
-            AlertKind::Hit => format!("FUNDED SEED FOUND ({})", self.balance_btc),
-            AlertKind::Test => "seed-collider test alert".to_string(),
-            AlertKind::Heartbeat => format!("seed-collider alive on {}", self.hostname),
+            AlertKind::Hit => format!("SCHATZSUCHE: TREFFER ({})", self.balance_btc),
+            AlertKind::Test => "Schatzsuche: Testmeldung".to_string(),
+            AlertKind::Heartbeat => format!("Schatzsuche läuft auf {}", self.hostname),
         }
     }
 

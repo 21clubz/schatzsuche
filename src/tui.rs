@@ -1211,7 +1211,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
 pub fn print_hit_plain(hit: &Hit) {
     let mut out = io::stdout();
     let _ = writeln!(out, "\n\x1b[1;31m{}\x1b[0m", "=".repeat(72));
-    let _ = writeln!(out, "\x1b[1;31mFUNDED SEED FOUND\x1b[0m");
+    let _ = writeln!(out, "\x1b[1;31mWALLET MIT GUTHABEN GEFUNDEN\x1b[0m");
     let _ = writeln!(out, "  address : {}", hit.address);
     let _ = writeln!(out, "  balance : {}", hit.balance_btc);
     let _ = writeln!(out, "  path    : {}", hit.derivation_path);

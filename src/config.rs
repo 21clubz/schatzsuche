@@ -269,7 +269,7 @@ impl Config {
         let text = toml::to_string_pretty(&Config::default())
             .map_err(|e| format!("cannot serialise config: {e}"))?;
         let header = "\
-# seed-collider configuration.
+# Schatzsuche configuration.
 #
 # The seed of a hit is written ONLY to the local files in [hits]. Alert
 # channels receive timestamp, hostname, derivation path, address and balance,
