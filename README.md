@@ -121,15 +121,31 @@ Ohne Argumente startet das Programm im Terminal. Unter macOS öffnet der
 Doppelklick auf das App-Bundle ein Fenster; auf allen Systemen erzwingt `--gui`
 das Fenster.
 
+Im Fenster **rechnet zunächst nichts**. Es öffnet auf einer Gabelung — Suche oder
+Seed-Rettung —, und auch dahinter fängt die Suche erst an, wenn du den Knopf
+„Suche starten" drückst oder die Leertaste. Was Rechenzeit und Strom kostet,
+läuft auf Ansage und nicht von selbst.
+
 ## Bedienung
 
-| | |
+| Taste | Wirkung |
 | --- | --- |
 | Leertaste, Knopf START/STOPP | Suche anhalten und fortsetzen |
 | ↑ ↓, Klick auf einen Treffer | Treffer auswählen |
-| q, Esc | Beenden |
+| ⌘ , (Strg + ,) | Einstellungen auf- und zuklappen |
+| Esc | Zurück: erst das Wort-Feld, dann Einstellungen oder Seed-Rettung |
+| beliebige Taste im Vorspann | Vorspann überspringen |
+| ⌘ Q (Alt + F4) | Beenden |
 
-Ein ausgewählter Treffer zeigt seine Wörter nummeriert im rechten Feld.
+Solange in einem Feld getippt wird, gehören alle Tasten dem Feld — eine
+Leertaste im Seed-Wort landet im Wort und hält nicht die Suche an. Ein
+einzelnes `q` beendet nichts: dafür gibt es den Weg, den das Betriebssystem
+ohnehin kennt.
+
+Rechts steht das **Fundfach**: dort erscheint eine gefundene Wallet mit ihrem
+Guthaben, und ein Klick auf die Zeile klappt die Wörter nummeriert darunter auf.
+Solange nichts gefunden ist — also immer — steht dort, was dort stünde, und der
+Probealarm.
 
 ## Wortlänge
 
@@ -144,7 +160,9 @@ Einstellungen, **im laufenden Betrieb**, ohne Neustart:
 | 21 | 224 Bit | 2²²⁴ |
 | 24 | 256 Bit | 2²⁵⁶ |
 
-Dauerhaft über `word_count` in der `config.toml` oder `--words 12` beim Start.
+**Voreingestellt sind 12 Wörter** — die Länge, die fast jede Wallet ausgibt.
+Dauerhaft ändern über `word_count` in der `config.toml` oder `--words 24` beim
+Start.
 
 Jede Stufe kürzer sind drei Wörter weniger und damit ein 4-Milliarden-fach
 kleinerer Raum. **An der Aussichtslosigkeit ändert das nichts** — und an der
@@ -253,9 +271,17 @@ wiederherstellst — du hast die meisten Wörter, dir fehlt nur ein Teil —, is
 der Raum klein genug, dass ein Treffer nicht nur möglich, sondern wahrscheinlich
 ist.
 
-**Am einfachsten im Fenster:** Knopf **„Seed retten"**. Dort wählst du die
-Wortanzahl, trägst deine Wörter in einzelne Felder ein und markierst hinter
-jedem Wort, wie sicher du dir bist:
+**Am einfachsten im Fenster:** Knopf **„Seed retten"**. Es führt in vier
+Schritten durch die Sache, eine Frage pro Bild, und man kann jederzeit zurück:
+
+| | Schritt | Frage |
+| --- | --- | --- |
+| 1 | **Länge** | Wie viele Wörter hat deine Seed? |
+| 2 | **Wörter** | Trag ein, was du noch hast |
+| 3 | **Adresse** | Kennst du eine Adresse deiner Wallet? (freiwillig) |
+| 4 | **Start** | Wie stark soll der Rechner arbeiten? |
+
+Hinter jedem Wort sagt ein Knopf, wie sicher du dir bist:
 
 | Markierung | Bedeutung | Suchaufwand |
 | --- | --- | --- |
@@ -264,9 +290,60 @@ jedem Wort, wie sicher du dir bist:
 | **verrutscht** (violett) | Reihenfolge unklar | k! je zusammenhängender Gruppe |
 
 Die Markierungen lassen sich **kombinieren** — zwei fehlende Wörter und ein
-vertauschtes Paar sind eine einzige Suche. Unter den Feldern steht live, wie
-groß der Raum ist und wie lange es schätzungsweise dauert. Ist der Raum zu
-groß, sagt das Programm es, statt eine aussichtslose Suche zu starten.
+vertauschtes Paar sind eine einzige Suche. Im letzten Schritt steht, wie groß
+der Raum ist und wie lange es schätzungsweise dauert.
+
+**Vorher gefahrlos ausprobieren:** auf Schritt 2 steht ein Würfel,
+**„Übungswörter würfeln"**. Er setzt eine erfundene Seed samt passender Adresse
+ins Formular und lässt ein Wort offen — damit läuft der ganze Ablauf einmal
+durch und endet mit genau dieser Seed als Treffer. Ein Streifen über dem
+Formular sagt die ganze Zeit, dass es Übungsdaten sind. Gespeichert und gemeldet
+wird dabei nichts: mit einer Zieladresse prüft die *Suche* keine Guthaben, also
+kommt auch kein Eintrag in `hits.txt`. Auch der Kontostand-Knopf bleibt bei
+einem Übungslauf weg — eine erfundene Adresse an einen fremden Dienst zu schicken
+hat keinen Zweck. Man lernt die Bedienung damit **vor** dem Ernstfall statt in
+ihm.
+
+**Keine Größe wird abgelehnt.** Vier fehlende Wörter sind siebzehn Billionen
+Möglichkeiten, die niemand zu Ende rechnet — das Programm sagt genau das und
+startet trotzdem, wenn du es willst. Wie eine aussichtslose Suche aussieht, ist
+schließlich das Thema dieses Programms. Nur ein *zusammenhängender* Block
+verrutschter Wörter ist auf acht begrenzt, und das aus Speichergründen: ihre
+Reihenfolgen werden als Liste erzeugt, und k! wächst schneller als jeder
+Arbeitsspeicher.
+
+### Die Adresse ist freiwillig
+
+| | Was passiert |
+| --- | --- |
+| **mit Adresse** | Am Ende bleibt genau die eine Seed übrig, die zu dieser Wallet gehört. |
+| **ohne Adresse, wenige Möglichkeiten** | Du bekommst sie aufgelistet, jede mit ihrer ersten Adresse zum Vergleichen. |
+| **ohne Adresse, viele Möglichkeiten** | Jede mögliche Seed wird gegen die Adress-Datenbank geprüft. Findet sich eine Wallet **mit Guthaben**, bekommst du Wörter und Betrag — gespeichert wie ein regulärer Fund, mit Sicherungskopie und Benachrichtigung. |
+
+Leere Wallets werden dabei weder gespeichert noch gemeldet: Adress-Auszüge sind
+voll von Adressen, die längst leergeräumt sind, und ein Alarm für einen
+Kontostand von null ist ein Fehlalarm.
+
+> Das setzt eine **echte** Adress-Datenbank voraus. Mit der Übungs-Liste aus
+> `synth-db` findet diese Suche garantiert nichts — darin stehen nur
+> Zufallsadressen, die niemandem gehören. Siehe `build-db`.
+
+**Beim Eintippen hilft das Fenster mit:**
+
+* Wer seine Wörter schon irgendwo stehen hat, fügt sie **alle auf einmal** ein
+  und drückt „Verteilen"; `?` steht für ein fehlendes Wort. Passt die Anzahl zu
+  einer Seed-Länge, stellt sich das Formular selbst darauf um.
+* Während getippt wird, stehen unter dem Feld die **passenden BIP-39-Wörter**
+  zum Anklicken — 2048 Wörter muss niemand auswendig können.
+* Hinter jedem Feld sagt ein Punkt, wie das Wort gelesen wurde: grün heißt
+  „steht genau so auf der Liste", rot heißt „steht nicht drauf".
+* Steht dort ein **gelber Punkt mit einem anderen Wort**, dann hat das Programm
+  etwas anderes verstanden, als du geschrieben hast. Vier Buchstaben genügen
+  nämlich, um ein BIP-39-Wort eindeutig zu bestimmen — aus `aban` wird
+  `abandon`, und aus dem Vertipper `abandonn` eben auch. Das ist gewollt, aber
+  du sollst es sehen und nicht raten müssen.
+
+![Schritt 2 der Seed-Wiederherstellung: die Schrittleiste oben, das Feld zum Einfügen aller Wörter, und die Wortfelder mit Rückmeldung je Wort.](docs/recover.png)
 
 Fürs Terminal gibt es dasselbe kompakter — `?` für ein fehlendes Wort, ein
 angehängtes `*` für ein unsicheres:
@@ -284,25 +361,59 @@ Ein bewusst *nicht* angebotener Fall ist die freie Umsortierung aller Wörter:
 24 Wörter lassen sich 6·10²³-fach anordnen — das ist wieder Collider-Gebiet,
 und die eingebaute Obergrenze lehnt es ab.
 
-**Sicherheit:** Für das Prüfen des Kontostands und das spätere Benutzen der
-Seed muss der Rechner am Netz sein — ein Risiko, das die Warnung ausspricht.
-Die Wörter selbst verlassen den Rechner nie; sie werden nur lokal
-durchprobiert, nachprüfbar in `src/recover.rs`.
+**Sicherheit:** Für das spätere Benutzen der Seed muss der Rechner am Netz sein
+— ein Risiko, das die Warnung ausspricht. Die Wörter selbst verlassen den
+Rechner nie; sie werden nur lokal durchprobiert, nachprüfbar in
+`src/recover.rs`.
+
+**Kontostand.** Nach einem Fund steht dort, was die lokale Adressliste über die
+Wallet weiß — kostenlos und ohne Netz. Weil diese Liste aber nur die Adressen
+kennt, die du geladen hast, ist „steht nicht drin" dort die normale Antwort und
+heißt **nicht** „leer". Für die echte Zahl gibt es einen Knopf
+**„Kontostand online prüfen"**. Der schickt die ersten Adressen der Wallet — und
+nur die, niemals die Wörter — an den Dienst aus `[balance] api`, voreingestellt
+`mempool.space`. Bei einem Übungslauf gibt es ihn nicht. Wer einen eigenen Node
+hat, trägt ihn dort ein; dann sieht niemand sonst, welche Adressen nachgeschaut
+wurden.
+
+Von allein läuft die Abfrage nur, wenn du das **vorher** erlaubt hast: auf dem
+letzten Schritt vor dem Start steht dafür ein Häkchen, samt der Angabe, an
+welchen Dienst die Adressen dann gehen. Ohne Haken bleibt es beim Knopf. Die
+Frage steht dort und nicht auf dem Ergebnisbildschirm, weil sie vorher noch
+eine Entscheidung ist — neben einer gerade zurückgeholten Wallet wäre sie nur
+noch eine Mitteilung.
+
+Gesucht wird nach dem **Gap-Limit**: je Ableitungsschema so weit, bis zwanzig
+leere Adressen hintereinander kommen. Das ist die Zahl aus BIP-44 und das, was
+ein Wallet-Programm tut — Geld auf Adresse sieben wird also gefunden. „Alle"
+Adressen gibt es nicht, je Kette sind gut zwei Milliarden möglich; darum steht
+unter der Zahl, wie viele tatsächlich angesehen wurden.
 
 ## Wohin ein Treffer geht
 
 Die Reihenfolge ist ein Haltbarkeitsversprechen, kein Stilmittel:
 
-1. Vollständiger Datensatz nach `hits.jsonl` — Wörter, Entropie, privater
-   Schlüssel, Pfad, Adresse, Betrag, Zeitstempel, Rechnername.
+1. Vollständiger Datensatz nach `hits.txt` — Wörter, Entropie, privater
+   Schlüssel, Pfad, Adresse, Betrag, Zeitstempel, Rechnername. Eine **schlichte
+   Textdatei** mit beschrifteten Zeilen, kein Datenformat: wer sie öffnet, tut
+   das genau einmal im Leben und soll dann seine Wörter lesen können, nicht
+   geschweifte Klammern. Ältere Fassungen schrieben `hits.jsonl`; die Datei
+   wird weiterhin mitgelesen, auch gemischt mit neuen Einträgen.
 2. Rechte auf 0600, dann `F_FULLFSYNC` auf die Datei **und** ein `fsync` auf das
    Verzeichnis. Unter macOS lässt `fsync(2)` die Daten im flüchtigen
    Schreibpuffer der SSD; `F_FULLFSYNC` ist die einzige echte Barriere.
-3. Zweite Kopie nach `hits_backup.jsonl` (am besten auf ein anderes Laufwerk).
-4. Rote Zeile in der Oberfläche, Wörter im Klartext.
-5. Terminal-Glocke.
-6. *Erst danach* die Benachrichtigungskette.
-7. Die Suche läuft weiter.
+3. Zweite Kopie nach `hits_backup.txt` (am besten auf ein anderes Laufwerk).
+4. Im Fenster: ein Band quer über den Bildschirm, ein Ton, und das Symbol im
+   Dock hüpft, bis du hinschaust. Die Wörter erscheinen **erst auf Klick** —
+   nicht von selbst, damit sie nicht ungefragt auf einem geteilten Bildschirm
+   stehen. Im Terminal stattdessen die Glocke.
+5. *Erst danach* die Benachrichtigungskette — Systemmeldung mit Ton, und was
+   sonst in `config.toml` eingeschaltet ist.
+6. Die Suche läuft weiter.
+
+Ob du das nachts mitbekämst, musst du nicht glauben: der Knopf **Probealarm**
+im Fundfach löst genau diese Meldung einmal aus. Er speichert nichts und legt
+keinen Eintrag an.
 
 ## Der Seed verlässt den Rechner nie
 
@@ -382,7 +493,7 @@ Gemessen gegen 5 Mio. Einträge: 2 Fehlalarme auf 2,39 Mio. Abfragen (8,4e-7) be
 cargo test --release
 ```
 
-112 Tests. Die tragenden:
+228 Tests. Die tragenden:
 
 * BIP-39/32/44/49/84-Ableitung gegen die Referenzbibliotheken `bitcoin` und
   `bip39` über zufällige Seeds, plus die veröffentlichten Testvektoren.
@@ -405,6 +516,13 @@ Jeder Commit wird unter Linux, macOS und Windows gebaut, getestet und geprüft.
 ## Lizenz
 
 MIT. Siehe [LICENSE](LICENSE).
+
+Die Wortmarke im Fenster ist in **Ubuntu Bold** gesetzt
+(`assets/Ubuntu-Bold.ttf`, © Canonical Ltd.), mitgeliefert unter der Ubuntu
+Font Licence 1.0 — der Text liegt als
+[assets/UBUNTU-FONT-LICENCE.txt](assets/UBUNTU-FONT-LICENCE.txt) daneben, weil
+diese Lizenz verlangt, dass sie mit der Schrift reist. Alles andere ist in den
+Schriften gesetzt, die egui selbst mitbringt.
 
 ---
 
