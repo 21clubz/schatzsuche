@@ -350,4 +350,128 @@ mod tests {
             e.fill(&mut buf);
         }
     }
+
+    /// Der Marker, an dem der Elternprozess die Ziehungen seines Kindes
+    /// wiedererkennt. Die Testausgabe drumherum interessiert nicht.
+    const DRAW_LINE: &str = "SC_DRAW ";
+
+    /// Zwei Läufe des Programms dürfen nie dieselben Wörter würfeln.
+    ///
+    /// Das ist die Frage „sucht jeder Rechner nach denselben Wörtern?", und
+    /// innerhalb eines Prozesses ist sie nicht zu beantworten: ein Generator,
+    /// der beim Start immer gleich anfängt, liefert in *einem* Lauf lauter
+    /// verschiedene Werte und in jedem Lauf dieselbe Folge — genau der Fehler,
+    /// der eine solche Suche wertlos machen würde, und genau der, den
+    /// [`entropy_refills_and_never_repeats_within_a_block`] nicht sieht.
+    ///
+    /// Der Test startet darum das Testprogramm zweimal neu, lässt jedes Kind
+    /// wie ein Arbeiter würfeln und vergleicht die zwei Folgen. Zwei Prozesse
+    /// sind das Nächste an zwei Rechnern, was sich in einem Test nachstellen
+    /// lässt; identisch wären sie nur, wenn die Entropie nicht vom Betriebs-
+    /// system käme.
+    #[test]
+    fn two_runs_of_the_program_never_draw_the_same_words() {
+        // Die Kindrolle: würfeln und ausgeben, ohne selbst wieder zu starten.
+        if std::env::var("SC_DRAW_CHILD").is_ok() {
+            let mut src = Entropy::new();
+            let mut buf = [0u8; 16];
+            for _ in 0..64 {
+                src.fill(&mut buf);
+                println!("{DRAW_LINE}{}", util::hex(&buf));
+            }
+            return;
+        }
+
+        let exe = std::env::current_exe().expect("das Testprogramm muss sich selbst finden");
+        let run_again = || -> Vec<String> {
+            let out = std::process::Command::new(&exe)
+                // Der volle Pfad, nicht der kurze Name: mit `--exact` muss der
+                // Filter den ganzen Namen treffen, sonst läuft im Kind kein
+                // Test und es kommt gar nichts zurück.
+                .args([
+                    "engine::tests::two_runs_of_the_program_never_draw_the_same_words",
+                    "--exact",
+                    "--nocapture",
+                ])
+                .env("SC_DRAW_CHILD", "1")
+                .output()
+                .expect("das Testprogramm liess sich nicht erneut starten");
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter_map(|l| l.strip_prefix(DRAW_LINE).map(str::to_owned))
+                .collect()
+        };
+
+        let first = run_again();
+        let second = run_again();
+        assert_eq!(first.len(), 64, "der erste Lauf hat nicht gewürfelt");
+        assert_eq!(second.len(), 64, "der zweite Lauf hat nicht gewürfelt");
+
+        // Nicht bloß „die Folgen sind verschieden": kein einziger Wert aus dem
+        // einen Lauf darf im anderen vorkommen. Ein Generator mit fester
+        // Startzahl fiele hier mit allen 64 Werten auf.
+        let overlap = first
+            .iter()
+            .filter(|d| second.contains(d))
+            .collect::<Vec<_>>();
+        assert!(
+            overlap.is_empty(),
+            "zwei Läufe zogen {} gemeinsame Werte, zum Beispiel {}",
+            overlap.len(),
+            overlap[0]
+        );
+    }
+
+    /// Eindeutig heißt nicht zufällig.
+    ///
+    /// [`entropy_refills_and_never_repeats_within_a_block`] würde einen
+    /// hochzählenden Zähler durchlassen — dessen Werte sind alle verschieden.
+    /// Hier wird darum die Verteilung geprüft, nicht die Eindeutigkeit: über
+    /// 32 KiB müssen etwa halb so viele Einsen wie Bits herauskommen, jede der
+    /// acht Bitstellen muss für sich ausgewogen sein, und jeder der 256
+    /// möglichen Bytewerte muss vorkommen.
+    ///
+    /// Die Schranken sind absichtlich weit. Bei 262 144 Bits liegt die
+    /// Standardabweichung der Einsen bei 256; erlaubt ist ein Prozent, also
+    /// 2621 — mehr als das Zehnfache. Ein Zähler, ein festgeklemmtes Bit oder
+    /// ein wiederholter Block reißt das um Größenordnungen, echter Zufall nie.
+    #[test]
+    fn the_entropy_is_evenly_spread_not_merely_distinct() {
+        let mut e = Entropy::new();
+        let mut bytes = Vec::with_capacity(32 * 1024);
+        let mut buf = [0u8; 32];
+        while bytes.len() < 32 * 1024 {
+            e.fill(&mut buf);
+            bytes.extend_from_slice(&buf);
+        }
+
+        let bits = bytes.len() * 8;
+        let ones: usize = bytes.iter().map(|b| b.count_ones() as usize).sum();
+        let off = ones.abs_diff(bits / 2);
+        assert!(
+            off < bits / 100,
+            "{ones} Einsen auf {bits} Bits — {off} neben der Mitte, erlaubt sind {}",
+            bits / 100
+        );
+
+        for bit in 0..8 {
+            let set = bytes.iter().filter(|b| *b & (1 << bit) != 0).count();
+            let off = set.abs_diff(bytes.len() / 2);
+            assert!(
+                off < bytes.len() / 20,
+                "Bitstelle {bit} steht {set} mal von {} — festgeklemmt?",
+                bytes.len()
+            );
+        }
+
+        let mut seen = [false; 256];
+        for b in &bytes {
+            seen[*b as usize] = true;
+        }
+        let missing = seen.iter().filter(|s| !**s).count();
+        assert_eq!(
+            missing, 0,
+            "{missing} von 256 Bytewerten kamen in 32 KiB nie vor"
+        );
+    }
 }
