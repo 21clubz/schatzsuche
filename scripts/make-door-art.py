@@ -13,18 +13,26 @@ Schlüssel, danach eine Schatzkarte; die Bilder sagen dieselben zwei Dinge —
 blind würfeln, die eigene Wallet zurückholen — im Material der Truhe, nach der
 das Programm heißt.
 
-**Zwei Wege auf die Kachel, und der Unterschied ist keine Laune.** Der
-Schlüssel ist ein *freigestelltes* Motiv: er wurde vor cremefarbenem Grund
-gerendert, [`cutout`] flutet den weg, und übrig bleibt ein Gegenstand, der auf
-der Kachel schwebt. Die Würfel sind ein *Ausschnitt aus einer Szene* — sie
-liegen zwischen Fingern, Laterne und Seekarte, und die Farben liegen zu dicht
-beieinander, um sie zu trennen: gemessen kommt das Würfelholz auf einen
-Farbton von 20 bis 27 Grad, das Pergament auf 31 bis 33, die Finger auf 16.
-Jede Schwelle, die das Pergament wegnimmt, frisst auch den Würfel an, und der
-obere ist zudem bewegungsunscharf — eine harte Kante an einem unscharfen Rand
-sieht immer nach Fehler aus. Rund beschnitten braucht es die Trennung gar
-nicht: die Messingwinkel der Kachel rahmen den Kreis, und das liest sich als
-eingelassenes Medaillon.
+**Beide Motive sind freigestellt** — vor cremefarbenem Grund gerendert,
+[`cutout`] flutet den weg, übrig bleibt ein Gegenstand, der auf der Kachel
+schwebt.
+
+Für die Würfel war das nicht immer so. Die erste Vorlage war eine *Szene*: zwei
+Würfel zwischen Fingern, Laterne und Seekarte, deren Farben zu dicht
+beieinanderlagen, um sie zu trennen (Würfelholz 20 bis 27 Grad Farbton,
+Pergament 31 bis 33, Finger 16 — jede Schwelle, die das Pergament wegnahm,
+fraß den Würfel an). Sie wurde darum rund beschnitten und saß als Medaillon in
+der Kachel. Die zweite Vorlage ist ein sauberer Freisteller-Render wie der
+Schlüssel, und damit fällt der Sonderweg weg: die Würfel stehen jetzt frei auf
+der Kachel, größer und ohne Kreis um sich herum.
+
+Ein Rest der Szene ist geblieben: Hinter den Würfeln liegt noch ein Pergament,
+und darüber schwebt ein Kompass. Der Kompass wird weggeschnitten
+([`DICE_CROP`]), das Pergament löst die Flut größtenteils selbst auf — es ist
+so blass wie der Grund —, aber seine verbrannten Ränder und die Schrift darauf
+überleben als Fetzen. Die räumt [`keep_largest`] weg: von allem, was nach der
+Flut übrig ist, bleibt die größte zusammenhängende Form, und das sind die zwei
+Würfel.
 
 Both are written as square 256-pixel sheets with the subject centred, and the
 window draws each into the same box. That is deliberate: the two subjects have
@@ -53,16 +61,22 @@ N = 256
 FILL = {
     "map": 0.76,
     "key": 0.90,
+    # Die Würfel liegen nebeneinander und sind damit fast doppelt so breit wie
+    # hoch. Da die Breite den Maßstab bestimmt, füllen sie die Kachel oben und
+    # unten ohnehin nicht aus — ein Rand wie beim Schlüssel ließe sie klein
+    # aussehen.
+    "dice": 0.98,
 }
 
-# Der Ausschnitt aus der Würfelszene, in Bildpunkten der Vorlage (1024 × 1024),
-# und quadratisch: das Bullauge schneidet daraus den Kreis.
+# Was von der Würfelvorlage übrig bleibt, in Bildpunkten der Vorlage
+# (1024 × 1024).
 #
-# Gewählt ist der Ausschnitt nach der Diagonale, die die zwei Würfel bilden —
-# der fliegende oben links, der liegende unten rechts. Enger geschnitten fällt
-# einer aus dem Kreis, weiter geschnitten werden beide zu klein, um bei 68
-# Punkten noch als Würfel lesbar zu sein.
-DICE_BOX = (437, 470, 767, 800)
+# Oben abgeschnitten wird bei 344, weil dort die Würfel anfangen: darüber
+# liegen nur noch Kompass und Pergament. Gemessen, nicht geschätzt — von 344
+# an wächst die Zahl der Bildpunkte je Zeile stetig (78, 102, 119, 127, 186,
+# 240 …), das ist die Spitze des linken Würfels; darüber sind es verstreute
+# 30 bis 100, und das ist der Fetzen.
+DICE_CROP = (80, 344, 950, 830)
 
 # Kantenlänge der Seekarte hinter der Gabelung.
 #
@@ -80,6 +94,11 @@ MAP_BG_PX = 768
 # the same burnt edge a moment earlier along and matches its tone to within a
 # value or two. Both were measured against the render, not guessed.
 SPARKLE = {"map": ((872, 872, 940, 932), (0, -110))}
+
+# Ab welcher Deckung ein Bildpunkt für [`keep_largest`] zum Motiv gehört.
+# Tief angesetzt, damit die weichen Ränder der Würfel dazuzählen und nicht als
+# eigene Fetzen enden.
+ALPHA_FLOOR = 24
 
 # The door tile from `gui.rs`, so the preview shows the real thing.
 TILE_BG = (34, 27, 18)
@@ -104,20 +123,64 @@ def build(name):
     return fit(cut, N, margin)
 
 
-def build_porthole(name, box):
-    """Ein Ausschnitt aus einer Szene, rund beschnitten — siehe Kopf der Datei.
+def keep_largest(img):
+    """Behält die größte zusammenhängende Form und löscht alles andere.
 
-    Der Rand ist um einen Bildpunkt weich gezeichnet. Ohne das steht der Kreis
-    bei 68 Punkten als Treppe da, weil er auf ein Achtel seiner Größe verkleinert
-    wird und die harte Kante dabei aliast.
+    Nach der Flut steht neben dem Motiv oft noch Kleinkram: bei den Würfeln
+    die verbrannten Ränder des Pergaments dahinter und die Schrift darauf,
+    beides zu gesättigt, um mit dem Grund zu verschwinden. Eine Schwelle
+    bekommt das nicht weg — die Fetzen sind so dunkel wie das Holz. Ihre Größe
+    unterscheidet sie: die Würfel sind eine Form aus 270 000 Bildpunkten, der
+    größte Fetzen hat 46.
+
+    Zusammenhängend heißt über Kanten, nicht über Ecken. Diagonale Nachbarn
+    mitzuzählen würde einen Fetzen, der die Würfel mit einer Spitze berührt,
+    zum Teil von ihnen machen — und genau solche Spitzen hat eine
+    ausgefranste Pergamentkante.
     """
-    art = Image.open(source_of(name)).convert("RGB").crop(box).resize((N, N), Image.LANCZOS)
-    mask = Image.new("L", (N * 4, N * 4), 0)
-    ImageDraw.Draw(mask).ellipse([0, 0, N * 4 - 1, N * 4 - 1], fill=255)
-    mask = mask.resize((N, N), Image.LANCZOS)
-    art = art.convert("RGBA")
-    art.putalpha(mask)
-    return art
+    alpha = img.split()[3]
+    a = alpha.load()
+    w, h = img.size
+    seen = [[False] * w for _ in range(h)]
+    blobs = []
+    for y0 in range(h):
+        for x0 in range(w):
+            if seen[y0][x0] or a[x0, y0] < ALPHA_FLOOR:
+                continue
+            stack = [(x0, y0)]
+            seen[y0][x0] = True
+            found = []
+            while stack:
+                x, y = stack.pop()
+                found.append((x, y))
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nx, ny = x + dx, y + dy
+                    if (
+                        0 <= nx < w
+                        and 0 <= ny < h
+                        and not seen[ny][nx]
+                        and a[nx, ny] >= ALPHA_FLOOR
+                    ):
+                        seen[ny][nx] = True
+                        stack.append((nx, ny))
+            blobs.append(found)
+
+    blobs.sort(key=len, reverse=True)
+    for rest in blobs[1:]:
+        for x, y in rest:
+            a[x, y] = 0
+    out = img.copy()
+    out.putalpha(alpha)
+    return out, [len(b) for b in blobs[:4]]
+
+
+def build_dice():
+    """Die Würfel: zuschneiden, freistellen, die Fetzen wegräumen, einpassen."""
+    src = Image.open(source_of("dice")).crop(DICE_CROP)
+    cut, sizes = keep_largest(cutout(src))
+    print(f"dice: Formen nach der Flut {sizes}", file=sys.stderr)
+    margin = int(N * (1.0 - FILL["dice"]) / 2)
+    return fit(cut, N, margin)
 
 
 def preview(sheets, path, zoom=4):
@@ -164,7 +227,7 @@ if __name__ == "__main__":
     # Die Karte, die dort lag, ist auf den Tisch gewandert: sie liegt jetzt
     # hinter beiden Türen (`assets/map-bg.png`).
     sheets = [
-        ("search", build_porthole("dice", DICE_BOX)),
+        ("search", build_dice()),
         ("recover", build("key")),
     ]
 
