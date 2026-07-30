@@ -30,6 +30,14 @@ jobs:
             target: x86_64-unknown-linux-gnu
             archive: schatzsuche-linux-x86_64
             cpu: x86-64-v2
+          # Built natively on GitHub's arm64 runner rather than cross-compiled:
+          # the GTK stack in the Linux GUI dependencies does not survive
+          # cross-compilation. `generic` is armv8-a, which reaches back to the
+          # Raspberry Pi 3.
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            archive: schatzsuche-linux-arm64
+            cpu: generic
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive: schatzsuche-windows-x86_64
