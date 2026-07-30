@@ -492,13 +492,33 @@ mod tests {
     /// A paused search is not running, and the clock has to say so. It used to
     /// keep counting, so a run left paused overnight claimed the whole night
     /// as search time — and the lifetime average divides by exactly this.
+    ///
+    /// Gemessen wird gegen die Uhr des Betriebssystems, nicht gegen
+    /// hingeschriebene Millisekunden. `thread::sleep` schläft **mindestens** so
+    /// lange wie verlangt und auf einer geteilten Maschine erheblich länger:
+    /// die frühere Fassung verlangte nach 40 + 60 + 40 ms Schlaf höchstens 120
+    /// gezählte ms und scheiterte auf dem macOS-Läufer der CI viermal in Folge
+    /// mit 255 ms. Sie hat die Auslastung des Läufers geprüft, nicht die
+    /// Pausenlogik.
+    ///
+    /// Die zwei laufenden Abschnitte werden darum eingeklammert und
+    /// mitgemessen. Beide Klammern sind absichtlich etwas zu weit — die erste
+    /// beginnt vor der Uhr und endet erst, wenn die Pause schon eingetragen
+    /// ist, die zweite beginnt vor dem Fortsetzen und endet nach dem Ablesen —,
+    /// sodass ihre Summe alles enthält, was die Uhr zählen durfte. Die Pause
+    /// selbst liegt zwischen den Klammern und in keiner von beiden. Wer sie
+    /// mitzählte, käme über die Summe hinaus, und zwar um die Länge der Pause;
+    /// die Toleranz von 20 ms ist für Ablesekörnung da, nicht für 60 ms Pause.
     #[test]
     fn the_clock_stops_while_paused() {
-        use std::time::Duration;
+        use std::time::{Duration, Instant};
+
+        let outer = Instant::now();
         let mut r = Rate::new(8);
         std::thread::sleep(Duration::from_millis(40));
 
         r.note_paused(true);
+        let ran_before = outer.elapsed();
         let at_pause = r.elapsed();
         std::thread::sleep(Duration::from_millis(60));
         let during = r.elapsed();
@@ -508,23 +528,42 @@ mod tests {
             during.saturating_sub(at_pause)
         );
 
+        let resumed = Instant::now();
         r.note_paused(false);
         std::thread::sleep(Duration::from_millis(40));
         let after = r.elapsed();
+        let ran_after = resumed.elapsed();
+
         assert!(after > during, "clock did not restart");
+        let ran = ran_before + ran_after;
         assert!(
-            after < Duration::from_millis(120),
-            "the pause was counted after all: {after:?}"
+            after < ran + Duration::from_millis(20),
+            "the pause was counted after all: {after:?} gezählt, aber nur {ran:?} gelaufen"
         );
     }
 
+    /// Dieselbe Vorsicht wie bei [`the_clock_stops_while_paused`]: verglichen
+    /// wird gegen die Zeit, die wirklich vergangen ist. Vorher stand hier ein
+    /// festes Band von 500 bis 10 000 Seeds je Sekunde für „100 Seeds in etwa
+    /// 50 ms" — auf dem Läufer, der aus 40 ms Schlaf 255 gemacht hat, wären es
+    /// 400 je Sekunde gewesen, und der Test wäre gefallen, ohne dass an der
+    /// Rechnung etwas falsch war.
     #[test]
     fn rate_tracks_instantaneous_throughput() {
+        let started = std::time::Instant::now();
         let mut r = Rate::new(8);
         std::thread::sleep(std::time::Duration::from_millis(50));
         let inst = r.sample(100);
-        // 100 seeds in ~50ms is ~2000/s; allow a wide band for CI jitter.
-        assert!(inst > 500.0 && inst < 10_000.0, "implausible rate {inst}");
+        let waited = started.elapsed().as_secs_f64();
+
+        // Was hier herauskommen muss, hängt nur an der gemessenen Zeit. Das
+        // Band von Halbe bis Doppelte lässt Ablesekörnung zu, aber keine Rate,
+        // die die Zeit nicht anschaut: 100 Seeds sind 100 Seeds.
+        let expected = 100.0 / waited;
+        assert!(
+            inst > expected * 0.5 && inst < expected * 2.0,
+            "implausible rate {inst} /s, erwartet um {expected:.0} /s nach {waited:.3} s"
+        );
     }
 
     #[test]
