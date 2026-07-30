@@ -1,6 +1,6 @@
 [package]
 name = "schatzsuche"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Rät zufällige BIP-39-Wallets und misst die Aussichtslosigkeit in Vielfachen des Universumsalters."
 authors = ["21clubz"]
