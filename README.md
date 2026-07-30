@@ -133,6 +133,8 @@ läuft auf Ansage und nicht von selbst.
 
 ## Bedienung
 
+**Im Fenster:**
+
 | Taste | Wirkung |
 | --- | --- |
 | Leertaste, Knopf START/STOPP | Suche anhalten und fortsetzen |
@@ -144,8 +146,18 @@ läuft auf Ansage und nicht von selbst.
 
 Solange in einem Feld getippt wird, gehören alle Tasten dem Feld — eine
 Leertaste im Seed-Wort landet im Wort und hält nicht die Suche an. Ein
-einzelnes `q` beendet nichts: dafür gibt es den Weg, den das Betriebssystem
-ohnehin kennt.
+einzelnes `q` beendet **im Fenster** nichts: dort gibt es Wort-Felder, in denen
+ein `q` ein Buchstabe ist, und dafür den Weg, den das Betriebssystem ohnehin
+kennt.
+
+**Im Terminal**, wo es keine Eingabefelder gibt, beendet `q` sofort:
+
+| Taste | Wirkung |
+| --- | --- |
+| Leertaste | Suche anhalten und fortsetzen |
+| ↑ ↓ | Treffer auswählen |
+| Klick auf einen Treffer | Seed anzeigen |
+| q | Beenden |
 
 Rechts steht das **Fundfach**: dort erscheint eine gefundene Wallet mit ihrem
 Guthaben, und ein Klick auf die Zeile klappt die Wörter nummeriert darunter auf.
