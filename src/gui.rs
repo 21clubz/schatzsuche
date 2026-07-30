@@ -3706,10 +3706,17 @@ impl GuiApp {
                     // Auch hier gesperrt, nur knapper: in der Kopfzeile steht
                     // die Marke bei dreizehn Punkten, und dicht gesetzte
                     // Versalien werden in der Größe zum Klumpen.
+                    //
+                    // In Gold wie auf der Gabelung: derselbe Name soll nicht
+                    // je nach Bildschirm eine andere Farbe haben. Der große
+                    // Knopf in der Mitte ist ebenfalls warm, und zwei warme
+                    // Dinge ziehen gegeneinander — hier gewinnt aber die
+                    // Größe: der Knopf ist zwanzigmal so groß wie diese
+                    // Zeile, und sie steht ganz außen in der Ecke.
                     spaced_label(
                         ui,
                         "SCHATZSUCHE",
-                        pal().accent,
+                        pal().gold,
                         theme::wordmark(ui.ctx(), theme::BODY),
                         theme::BODY * 0.06,
                     );
