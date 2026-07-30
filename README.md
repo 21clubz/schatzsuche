@@ -46,7 +46,8 @@ geschieht, ist keine technische Frage mehr.
 
 ## Installation
 
-Fertige Programme für macOS, Linux und Windows liegen unter
+Fertige Programme für macOS (Apple- und Intel-Chip), Linux (x86-64 und ARM64,
+also auch Raspberry Pi und ARM-Server) und Windows liegen unter
 [Releases](../../releases). Im Mac-Archiv liegt zusätzlich `Schatzsuche.app`
 zum Doppelklicken.
 
@@ -82,7 +83,8 @@ wird zusätzlich auf echten Linux-, macOS- und Windows-Rechnern gebaut und
 getestet.
 
 Auf dem eigenen Rechner lohnt sich der Prozessor-spezifische Build — rund 13 %
-mehr Tempo, dafür läuft die Datei nur auf dieser CPU-Generation:
+mehr Tempo (gemessen auf einem M1), dafür läuft die Datei nur auf dieser
+CPU-Generation:
 
 ```bash
 RUSTFLAGS="-C target-cpu=native" cargo build --release
@@ -510,7 +512,8 @@ Gemessen gegen 5 Mio. Einträge: 2 Fehlalarme auf 2,39 Mio. Abfragen (8,4e-7) be
 cargo test --release
 ```
 
-228 Tests. Die tragenden:
+233 Tests, dazu zwei ignorierte Render-Hilfen für die Entwicklung. Die
+tragenden:
 
 * BIP-39/32/44/49/84-Ableitung gegen die Referenzbibliotheken `bitcoin` und
   `bip39` über zufällige Seeds, plus die veröffentlichten Testvektoren.
