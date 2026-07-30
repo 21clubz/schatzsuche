@@ -171,9 +171,27 @@ pub fn sink(ui: &Ui, resp: &Response) -> f32 {
 }
 
 /// Wie weit eine Fläche unter dem Zeiger angehoben ist.
+///
+/// `SC_SHOT_HOVER=1` hebt alles auf einmal an, für einen Screenshot. Ein
+/// Schwebezustand ist sonst das Einzige am ganzen Fenster, was sich nicht
+/// fotografieren lässt: Im Screenshot-Lauf liegt kein Zeiger auf irgendetwas,
+/// und was niemand ansehen kann, prüft auch niemand nach. Gehört zur Familie
+/// der `SC_SHOT_*`-Schalter, wie die Bildschirmauswahl in
+/// [`crate::ui::screen::screenshot_override`].
 pub fn lift(ui: &Ui, resp: &Response) -> f32 {
+    if hover_forced() {
+        return 1.0;
+    }
     ui.ctx()
         .animate_bool_with_time(resp.id.with("lift"), resp.hovered(), 0.09)
+}
+
+/// Einmal gelesen und behalten: `std::env::var` in jedem Bild für jede Fläche
+/// wäre ein Systemaufruf je Knopf und Bild.
+fn hover_forced() -> bool {
+    use std::sync::OnceLock;
+    static FORCED: OnceLock<bool> = OnceLock::new();
+    *FORCED.get_or_init(|| std::env::var("SC_SHOT_HOVER").is_ok())
 }
 
 /// Tiefe des Tastenhubs. Die Kante darunter ist genauso hoch, damit eine

@@ -5,7 +5,8 @@
 //! aus dem Raster stammt, hat einen Fehler gefunden.
 
 use eframe::egui::{
-    self, Align, Color32, FontId, Layout, Pos2, RichText, Sense, Stroke, TextureHandle, Ui, Vec2,
+    self, Align, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Stroke, TextureHandle, Ui,
+    Vec2,
 };
 
 use crate::ui::theme::{self, mono, pal};
@@ -279,6 +280,76 @@ pub fn button_quiet(label: &str) -> egui::Button<'static> {
     .rounding(theme::r_sm())
     .min_size(Vec2::new(0.0, 32.0))
 }
+
+/// Ein Knopf für die Kopfzeile, der antwortet, bevor er gedrückt wird.
+///
+/// [`button_quiet`] ist ein gewöhnlicher egui-Knopf und färbt sich beim
+/// Überfahren einen Hauch um — auf einer Holzmaserung sieht man davon fast
+/// nichts, und die zwei Knöpfe oben rechts wirkten deshalb wie aufgemalt. Hier
+/// stehen dieselben drei Handgriffe wie an den Türen und Karten: Er hebt sich
+/// unter dem Zeiger, wirft dabei einen Schatten, sein Rahmen leuchtet auf —
+/// und beim Drücken sinkt er darunter. Alles über [`feel`], also weich
+/// angenähert statt geschaltet; das Zurückfedern beim Loslassen ist der
+/// Unterschied zwischen „reagiert" und „fühlt sich an".
+///
+/// Der Zeiger wird zur Hand. Das ist die Rückmeldung, die zuerst ankommt —
+/// noch bevor sich irgendetwas bewegt hat.
+pub fn header_button(ui: &mut Ui, label: &str) -> egui::Response {
+    let font = egui::FontId::proportional(theme::BODY);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_string(), font, Color32::PLACEHOLDER);
+
+    // Der Platz muss den Hub mitzählen: Was sich hebt, braucht darüber Luft,
+    // sonst schneidet die Kopfzeile die angehobene Kante ab.
+    let pad = Vec2::new(14.0, 7.0);
+    let size = Vec2::new(
+        galley.size().x + pad.x * 2.0,
+        (galley.size().y + pad.y * 2.0).max(32.0) + LIFT_ROOM,
+    );
+    let (outer, resp) = ui.allocate_exact_size(size, Sense::click());
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+
+    let face = crate::ui::feel::tactile(
+        ui,
+        &resp,
+        Rect::from_min_size(
+            outer.min + Vec2::new(0.0, LIFT_ROOM),
+            Vec2::new(outer.width(), outer.height() - LIFT_ROOM),
+        ),
+    );
+    let t = crate::ui::feel::lift(ui, &resp);
+
+    // `hover` aus der Palette und keine selbst gemischte Aufhellung: Die
+    // Farbwelten bringen ihren eigenen Überfahr-Ton mit, und er ist auf den
+    // Text darauf abgestimmt. Der erste Versuch hellte die Fläche um die Hälfte
+    // Richtung Weiß auf — daraus wurde ein graues Feld, auf dem die Schrift
+    // ihren Kontrast verlor. Die Schriftfarbe bleibt darum, wie sie ist: was
+    // antwortet, sind Fläche, Rahmen und Schatten.
+    crate::ui::feel::shadow_under(ui.painter(), face, theme::r_sm(), t);
+    ui.painter().rect_filled(
+        face,
+        theme::r_sm(),
+        crate::ui::feel::mix(pal().panel, pal().hover, t),
+    );
+    ui.painter().rect_stroke(
+        face,
+        theme::r_sm(),
+        crate::ui::feel::glow_stroke(ui, &resp, pal().primary),
+    );
+
+    let at = face.center() - galley.size() / 2.0;
+    ui.painter().galley(at, galley, pal().text);
+    resp
+}
+
+/// Wie viel Luft über einem Kopfzeilen-Knopf für seinen Hub reserviert ist.
+///
+/// [`crate::ui::feel::tactile`] hebt um das Doppelte des Hub-Anteils; drei
+/// Punkte decken das mit einem Rest ab, der den Schatten nicht abschneidet.
+const LIFT_ROOM: f32 = 3.0;
 
 /// Die Augen eines Würfels, als Anteile der Kantenlänge.
 ///

@@ -3273,12 +3273,22 @@ impl GuiApp {
         // Wie `depth` vorab herausgeholt: die Zeichen-Abschlüsse unten dürfen
         // `self` nicht mehr ausleihen.
         let api = self.balance_api.clone();
-        // Vom Fehlerbildschirm aus führt „Zurück" dorthin zurück, nicht auf ein
-        // Dashboard, hinter dem keine Daten stehen.
-        let back_label = if matches!(*back, Screen::Failed { .. }) {
-            "Zurück"
+        // Von hier führt derselbe Weg zurück wie von der Suche: auf die
+        // Startseite mit den zwei Türen. Vorher hieß der Knopf „Zurück zur
+        // Suche" und sprang in den anderen Betriebsmodus — dieselbe Abkürzung,
+        // die auf der Suche jetzt auch nicht mehr genommen wird.
+        //
+        // Eine Ausnahme: Wer vom Fehlerbildschirm kommt, hat keine
+        // Adressdatenbank. Die Gabelung führte ihn dann auf ein Dashboard ohne
+        // Daten, also in dieselbe Sackgasse, aus der er gerade kam. Für den
+        // führt „Zurück" weiterhin dorthin, wo das Programm anbietet, die Liste
+        // anzulegen.
+        let from_failure = matches!(*back, Screen::Failed { .. });
+        let back_label = if from_failure { "Zurück" } else { "Hub" };
+        let back_hint = if from_failure {
+            "Zurück zum Hinweis, dass die Adressliste fehlt"
         } else {
-            "Zurück zur Suche"
+            "Zurück zur Startseite mit den zwei Türen"
         };
 
         // Set false to close the screen; set to restart with a blank form.
@@ -3301,18 +3311,11 @@ impl GuiApp {
                             .strong(),
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    RichText::new(back_label).color(pal().dim).size(theme::BODY),
-                                )
-                                .fill(pal().panel)
-                                .stroke(theme::hairline())
-                                .rounding(theme::r_sm())
-                                .min_size(Vec2::new(0.0, 32.0)),
-                            )
+                        if widgets::header_button(ui, back_label)
+                            .on_hover_text(back_hint)
                             .clicked()
                         {
+                            crate::ui::feel::bump(crate::ui::feel::Bump::Switch);
                             keep_open = false;
                         }
                         // Auch hier der Wegweiser, damit ein Fund nicht
@@ -3369,13 +3372,17 @@ impl GuiApp {
         } else {
             // Stop any running search before dropping the state.
             r.cancel();
-            // Both arrival stamps go, so the next visit in either direction
-            // fades in again instead of snapping.
+            // Alle Ankunftsstempel weg, damit der nächste Besuch in jeder
+            // Richtung wieder aufblendet statt hart zu erscheinen.
             ctx.memory_mut(|m| {
                 m.data.remove::<f64>(egui::Id::new("recover_at"));
                 m.data.remove::<f64>(egui::Id::new("dashboard_at"));
+                m.data.remove::<f64>(egui::Id::new("chooser_at"));
             });
-            self.screen = *back;
+            // Der Rückweg ist die Gabelung — außer für den, der aus dem
+            // Fehlerbildschirm kam: den führte sie auf ein Dashboard ohne
+            // Adressliste, also zurück in seine Sackgasse.
+            self.screen = if from_failure { *back } else { Screen::Chooser };
         }
     }
 
@@ -3699,7 +3706,7 @@ impl GuiApp {
                     );
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.add(widgets::button_quiet("Einstellungen")).clicked() {
+                        if widgets::header_button(ui, "Einstellungen").clicked() {
                             crate::ui::feel::bump(crate::ui::feel::Bump::Tap);
                             self.settings_open = !self.settings_open;
                         }
@@ -3718,8 +3725,7 @@ impl GuiApp {
                         // jemand gesagt hätte, wohin es geht. Der Weg über die
                         // Startseite kostet einen Klick mehr und zeigt dafür
                         // beide Türen — mitsamt der, aus der man gerade kommt.
-                        if ui
-                            .add(widgets::button_quiet("Hub"))
+                        if widgets::header_button(ui, "Hub")
                             .on_hover_text("Zurück zur Startseite mit den zwei Türen")
                             .clicked()
                         {
