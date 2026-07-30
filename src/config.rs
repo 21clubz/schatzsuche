@@ -81,6 +81,28 @@ impl Run {
         }
         crate::machine::Machine::detect().recommended_threads()
     }
+
+    /// Hat ein Mensch gesagt, wie stark gerechnet werden soll — oder kommt die
+    /// Antwort von den Voreinstellungen?
+    ///
+    /// Der Start rastet die Leistung sonst auf einen der vier Modi ein, damit
+    /// im Fenster genau eine Zeile leuchtet. Das war für eine Einstellung
+    /// gedacht, die niemand angefasst hat, wirkte aber auch auf `--threads`,
+    /// `--priority` und `--throttle`: `--threads 1` lief mit vier Kernen,
+    /// weil „Ausgewogen" von dort aus näher lag als „Unauffällig" (Priorität
+    /// wiegt in `nearest_mode` am schwersten). Ein Schalter, der still
+    /// überstimmt wird, ist schlimmer als keiner.
+    ///
+    /// Verglichen wird gegen die Voreinstellung, nicht gegen die
+    /// Befehlszeile: die Werte von dort stehen zu diesem Zeitpunkt längst in
+    /// dieser Struktur, und eine `config.toml`, die eine Kernzahl nennt, ist
+    /// genauso eine Ansage wie ein Schalter.
+    pub fn performance_named_by_hand(&self) -> bool {
+        let d = Run::default();
+        self.threads != d.threads
+            || self.priority != d.priority
+            || self.throttle_percent != d.throttle_percent
+    }
 }
 
 /// Physical core count.
@@ -549,6 +571,52 @@ mod tests {
         assert_eq!(parsed.balance.api, "https://mempool.space/api");
         assert_eq!(parsed.design.theme, "walnut");
         assert!(parsed.design.grain);
+    }
+
+    /// Was von Hand genannt wurde, muss stehen bleiben.
+    ///
+    /// Der Start rastet die Leistung sonst auf einen der vier Modi ein, und das
+    /// hat ausdrückliche Angaben still überstimmt: `--threads 1` lief mit vier
+    /// Kernen. Diese Unterscheidung ist die Bedingung dafür, dass das nicht
+    /// wieder passiert — darum steht sie hier fest und nicht nur im Ablauf.
+    #[test]
+    fn a_named_performance_setting_is_not_snapped_away() {
+        // Nichts angefasst: der Start darf einrasten.
+        assert!(!Run::default().performance_named_by_hand());
+
+        // Jede der drei Angaben zählt für sich.
+        for named in [
+            Run {
+                threads: 1,
+                ..Run::default()
+            },
+            Run {
+                threads: 6,
+                ..Run::default()
+            },
+            Run {
+                priority: 0,
+                ..Run::default()
+            },
+            Run {
+                throttle_percent: 40,
+                ..Run::default()
+            },
+        ] {
+            assert!(
+                named.performance_named_by_hand(),
+                "{named:?} wurde genannt, gilt aber als Voreinstellung"
+            );
+        }
+
+        // Die Wortlänge und die Adressen pro Pfad sagen nichts darüber, wie
+        // stark gerechnet wird — sie dürfen das Einrasten nicht verhindern.
+        assert!(!Run {
+            word_count: 24,
+            addresses_per_path: 50,
+            ..Run::default()
+        }
+        .performance_named_by_hand());
     }
 
     /// Eine `config.toml`, die vor `[design]` geschrieben wurde, muss

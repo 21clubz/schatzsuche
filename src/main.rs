@@ -802,7 +802,13 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
     // no mode at all — and the panel would then show four unlit rows, leaving
     // the reader to work out what was running. Snapping first means the answer
     // is always visible and always true.
-    {
+    // Eine Einstellung, die niemand angefasst hat, rastet auf den passenden
+    // der vier Modi ein — dann leuchtet im Fenster genau eine Zeile, statt
+    // dass die Anzeige einen Zwischenzustand zeigt, den keiner gewählt hat.
+    // Wer aber `--threads`, `--priority` oder `--throttle` mitgibt oder es in
+    // die `config.toml` schreibt, bekommt genau das: siehe
+    // [`Run::performance_named_by_hand`].
+    if !cfg.run.performance_named_by_hand() {
         let machine = schatzsuche::machine::Machine::detect();
         let idx = schatzsuche::gui::nearest_mode(
             &machine,
@@ -1000,12 +1006,19 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
                 String::new()
             }
         );
+        // Abgelesen bei `control`, nicht bei `cfg`: das ist die Zahl, mit der
+        // gleich gerechnet wird. Die verlangte Zahl stand hier früher, und
+        // als der Start noch jede Einstellung auf einen der vier Modi
+        // einrastete, meldete diese Zeile „1 aktiv", während vier Kerne
+        // liefen. Eine Anzeige, die etwas anderes sagt als die Maschine tut,
+        // ist schlimmer als keine.
         println!(
-            "  Arbeiter   : {threads} aktiv von {} Kernen, Priorität {}{}",
+            "  Arbeiter   : {} aktiv von {} Kernen, Priorität {}{}",
+            control.active_threads(),
             machine.max_threads(),
-            Priority::from_u8(cfg.run.priority).label(),
-            if cfg.run.throttle_percent < 100 {
-                format!(", gedrosselt auf {} %", cfg.run.throttle_percent)
+            control.priority().label(),
+            if control.throttle() < 100 {
+                format!(", gedrosselt auf {} %", control.throttle())
             } else {
                 String::new()
             }

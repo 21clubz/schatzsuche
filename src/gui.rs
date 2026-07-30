@@ -4524,15 +4524,23 @@ impl GuiApp {
                         ),
                     ];
 
+                    // Ob überhaupt eine Zeile leuchtet. Früher war das sicher:
+                    // der Start rastete jede Einstellung auf einen dieser vier
+                    // Modi ein. Seit eine ausdrücklich genannte Einstellung
+                    // stehen bleibt (`--threads 6`, oder eine Kernzahl in der
+                    // `config.toml`), kann sie zu keinem Modus gehören — dann
+                    // steht sie unter den Zeilen ausgeschrieben, statt dass das
+                    // Fenster verschweigt, was läuft.
+                    let mut any_active = false;
                     for (idx, (name, t, prio, duty, sub, level, help)) in
                     presets.into_iter().enumerate()
                 {
                     let t = t.min(max_cores);
-                    // Exact match only. Startup resolves the configuration to
-                    // one of these first, so exactly one row is always lit.
+                    // Exact match only.
                     let active = threads == t
                         && self.control.priority() == prio
                         && self.control.throttle() == duty;
+                    any_active |= active;
                     let (row_clicked, info_clicked) =
                         widgets::preset_row(ui, name, &sub, level, active);
                     if info_clicked {
@@ -4553,6 +4561,31 @@ impl GuiApp {
                     }
                     ui.add_space(theme::S2);
                 }
+
+                    // Eine eigene Einstellung gehört zu keiner der vier Zeilen.
+                    // Sie wird darum ausgeschrieben — mit derselben Auskunft,
+                    // die die Zeilen geben: Kerne, Priorität, Einschaltdauer.
+                    if !any_active {
+                        ui.label(
+                            RichText::new(format!(
+                                "Eigene Einstellung: {threads} von {max_cores} Kernen · \
+                                 Priorität {} · {} % der Zeit",
+                                self.control.priority().label(),
+                                self.control.throttle()
+                            ))
+                            .color(pal().dim)
+                            .size(theme::SMALL),
+                        );
+                        ui.label(
+                            RichText::new(
+                                "So steht es in deiner config.toml oder kam beim Start mit. \
+                                 Ein Klick auf eine Zeile darüber ersetzt sie.",
+                            )
+                            .color(pal().muted)
+                            .size(theme::SMALL),
+                        );
+                        ui.add_space(theme::S2);
+                    }
 
                 ui.add_space(theme::S2);
                     ui.separator();
