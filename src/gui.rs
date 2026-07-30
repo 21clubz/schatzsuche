@@ -3090,20 +3090,47 @@ impl GuiApp {
                 ui.vertical_centered(|ui| {
                     let h = ui.available_height();
                     ui.add_space((h * 0.12 + (1.0 - fade) * 12.0).max(18.0));
+
+                    // Platz für den Schatten unter dem Titel. Wie groß er sein
+                    // muss, steht erst fest, wenn Marke und Frage gesetzt sind
+                    // — also wird hier ein Platz freigehalten und die Form
+                    // gleich hineingesetzt. Sie liegt dann unter dem Text,
+                    // obwohl sie später entsteht.
+                    //
+                    // **Warum überhaupt.** Die Wortmarke stand in `accent` auf
+                    // dem Pergament der Seekarte, und beide sind ähnlich hell:
+                    // im fertigen Bild gemessen kam sie auf **2,26 : 1**, wo
+                    // 4,5 : 1 die Grenze der Lesbarkeit ist. Der Bildschirm war
+                    // die eine bewusste Ausnahme von der Kontrastregel des
+                    // Hauses — mit dem Argument, hier stehe nichts, was man
+                    // lesen *muss*. Der Name des Programms ist aber genau das,
+                    // was ein Fremder hier zuerst liest.
+                    //
+                    // Die Antwort ist nicht, die Karte blasser zu machen (dann
+                    // ist sie weg) oder die Schrift dunkler (dann verschwindet
+                    // sie überall sonst): Ein weicher dunkler Hauch unter dem
+                    // Titel gibt beiden ihren Grund zurück. Auf ihm steht
+                    // dieselbe Farbe bei rund 7 : 1.
+                    let shade = ui.painter().add(egui::Shape::Noop);
+                    let title_top = ui.cursor().top();
+
                     ui.add(egui::Image::new(&logo).fit_to_exact_size(Vec2::splat(58.0)));
                     ui.add_space(theme::S3);
                     // Versalien wollen gesperrt werden: sie haben keine
                     // Ober- und Unterlängen, an denen das Auge die
                     // Buchstaben trennt, und stehen dicht gesetzt als Block
                     // da. Acht Prozent der Schriftgröße ist das übliche Maß
-                    // für eine Wortmarke — bei sechsundzwanzig Punkten also
-                    // gut zwei.
+                    // für eine Wortmarke.
+                    // Größer als anderswo: Auf diesem Bildschirm ist der Name
+                    // das Erste, was jemand sieht, und der einzige Text, der
+                    // etwas darstellen soll statt nur zu informieren.
+                    let mark = theme::DISPLAY * 1.35;
                     outlined_label(
                         ui,
                         "SCHATZSUCHE",
-                        pal().accent,
-                        theme::wordmark(ui.ctx(), theme::DISPLAY),
-                        theme::DISPLAY * 0.08,
+                        pal().gold,
+                        theme::wordmark(ui.ctx(), mark),
+                        mark * 0.08,
                     );
                     ui.add_space(theme::S2);
                     // Die Frage bleibt ungesperrt: gemischter Satz braucht
@@ -3115,6 +3142,23 @@ impl GuiApp {
                         pal().dim,
                         FontId::proportional(theme::TITLE),
                         0.0,
+                    );
+
+                    // Jetzt steht die Höhe fest, also kann der Hauch gesetzt
+                    // werden. Er reicht über den Text hinaus, weil ein Verlauf,
+                    // der genau an der Schriftkante endet, als Fleck zu sehen
+                    // ist statt als Licht.
+                    let title_bottom = ui.cursor().top();
+                    let mid = Pos2::new(ui.max_rect().center().x, (title_top + title_bottom) / 2.0);
+                    ui.painter().set(
+                        shade,
+                        widgets::ellipse_gradient_shape(
+                            mid,
+                            (title_bottom - title_top) * 2.6,
+                            (title_bottom - title_top) * 0.95,
+                            theme::tinted(pal().sunken, (196.0 * fade) as u8),
+                            Color32::TRANSPARENT,
+                        ),
                     );
                     ui.add_space(theme::S5);
 

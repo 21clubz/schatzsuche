@@ -503,6 +503,22 @@ pub fn ellipse_gradient(
     inner: Color32,
     outer: Color32,
 ) {
+    painter.add(ellipse_gradient_shape(center, rx, ry, inner, outer));
+}
+
+/// Derselbe Verlauf, aber als Form statt als Strich auf dem Papier.
+///
+/// Für die Fälle, in denen erst nach dem Zeichnen feststeht, wie groß er sein
+/// muss — dann wird vorher ein Platz freigehalten (`Shape::Noop`) und hinterher
+/// diese Form hineingesetzt. So liegt sie **unter** dem, was inzwischen
+/// darübergemalt wurde, obwohl sie später entstanden ist.
+pub fn ellipse_gradient_shape(
+    center: Pos2,
+    rx: f32,
+    ry: f32,
+    inner: Color32,
+    outer: Color32,
+) -> egui::Shape {
     const SEG: usize = 44;
     let mut mesh = egui::Mesh::default();
     mesh.colored_vertex(center, inner);
@@ -513,7 +529,7 @@ pub fn ellipse_gradient(
     for i in 0..SEG as u32 {
         mesh.add_triangle(0, 1 + i, 2 + i);
     }
-    painter.add(egui::Shape::mesh(mesh));
+    egui::Shape::mesh(mesh)
 }
 
 /// Eine große anklickbare Fläche auf dem Eröffnungsbildschirm: Bild,
