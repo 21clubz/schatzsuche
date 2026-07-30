@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Schatzsuche — ein Programm, das Bitcoin-Wallets errät</title>
+<meta name="description" content="Schatzsuche errät Bitcoin-Wallets — 3.343 pro Sekunde auf einem M1 — und beweist damit, dass das nicht funktioniert. Dieselbe Maschine rettet halb vergessene Seeds. Gratis, offen, ohne Anteil.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Schatzsuche — ein Programm, das Bitcoin-Wallets errät">
+<meta property="og:description" content="…und dabei beweist, dass das nicht funktioniert. Erwartete Wartezeit bis zum ersten Treffer: 10¹⁹ × das Alter des Universums. Dieselbe Maschine rettet halb vergessene Seeds — gratis, offen, ohne Anteil.">
+<meta property="og:image" content="https://21clubz.github.io/schatzsuche/assets/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<style>
+/* Palette: src/ui/theme.rs, Thema "walnut" */
+:root {
+  --bg: rgb(15, 11, 7);
+  --panel: rgb(38, 29, 20);
+  --inset: rgb(28, 21, 15);
+  --frame: rgb(92, 70, 44);
+  --sunken: rgb(9, 6, 4);
+  --control: rgb(66, 51, 34);
+  --text: rgb(238, 226, 201);
+  --dim: rgb(197, 178, 143);
+  --muted: rgb(160, 141, 111);
+  --gold: rgb(248, 196, 84);
+  --gold-mid: rgb(214, 158, 58);
+  --blue: rgb(126, 200, 222);
+  --red: rgb(247, 118, 142);
+  --green: rgb(147, 201, 138);
+  --mono: "SF Mono", "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
+}
+@font-face {
+  font-family: "Ubuntu Bold";
+  src: url("assets/Ubuntu-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  background: var(--bg) url("assets/wood.png") repeat;
+  background-size: 256px 256px;
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+h1, h2, h3, .wordmark, .bignum { font-family: "Ubuntu Bold", system-ui, sans-serif; font-weight: 700; }
+img { max-width: 100%; height: auto; display: block; }
+a { color: var(--blue); }
+
+section { padding: clamp(3.5rem, 9vw, 7rem) 1.25rem; }
+.wrap { max-width: 62rem; margin: 0 auto; }
+.narrow { max-width: 44rem; margin: 0 auto; }
+
+/* Abschnitts-Kopf wie im Programm: Goldbalken + Kapitälchen */
+.cap {
+  display: flex; align-items: center; gap: .55rem;
+  color: var(--gold); font-size: .8rem; letter-spacing: .22em;
+  text-transform: uppercase; font-weight: 600; margin-bottom: 1.1rem;
+}
+.cap::before { content: ""; width: 4px; height: 1em; background: var(--gold); border-radius: 2px; }
+h2 { font-size: clamp(1.5rem, 3.5vw, 2.1rem); margin-bottom: 1rem; letter-spacing: .01em; }
+p + p { margin-top: .9rem; }
+.dimtext { color: var(--dim); }
+.fineprint { color: var(--muted); font-size: .82rem; }
+
+.panel {
+  background: linear-gradient(rgba(38,29,20,.92), rgba(28,21,15,.92));
+  border: 1px solid var(--frame);
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(0,0,0,.55), inset 0 1px 0 rgba(238,226,201,.06);
+}
+
+/* Knöpfe wie im Fenster: Gold-Verlauf und dunkles Holz */
+.btn {
+  display: inline-block; padding: .8rem 1.9rem; border-radius: 10px;
+  font-family: "Ubuntu Bold", system-ui, sans-serif; font-size: 1.02rem;
+  text-decoration: none; text-align: center;
+}
+.btn-gold {
+  background: linear-gradient(rgb(250, 214, 130), var(--gold) 35%, var(--gold-mid));
+  color: rgb(20, 12, 4);
+  border: 1px solid rgb(120, 86, 30);
+  box-shadow: 0 3px 0 rgb(120, 86, 30), 0 10px 24px rgba(0,0,0,.5);
+}
+.btn-gold:hover { filter: brightness(1.06); }
+.btn-wood {
+  background: var(--control); color: var(--text);
+  border: 1px solid var(--frame);
+  box-shadow: 0 2px 0 rgba(0,0,0,.4);
+}
+.btn-wood:hover { background: rgb(80, 62, 42); }
+
+/* ------- 1 · Kopf ------- */
+.hero {
+  min-height: 100svh;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; gap: 1.1rem; padding-top: 4rem; padding-bottom: 4rem;
+}
+.hero img.chest { width: clamp(130px, 22vw, 190px); filter: drop-shadow(0 14px 30px rgba(0,0,0,.7)); }
+.wordmark { color: var(--gold); letter-spacing: .38em; font-size: clamp(1.1rem, 3vw, 1.55rem); text-indent: .38em; }
+.hero h1 {
+  font-size: clamp(1.5rem, 4.6vw, 2.6rem); line-height: 1.25; max-width: 21ch;
+  text-wrap: balance;
+}
+.hero h1 em { font-style: normal; color: var(--gold); }
+
+/* Die laufende Nachbildung */
+.demo { width: min(680px, 100%); padding: 1.4rem 1.5rem 1.1rem; margin-top: .6rem; text-align: left; }
+.demo-grid { display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: center; }
+.bignum { font-size: clamp(2.6rem, 7vw, 3.8rem); color: var(--blue); line-height: 1; font-variant-numeric: tabular-nums; }
+.demo .unit { color: var(--dim); font-size: .92rem; margin-top: .25rem; }
+.demo .statline { font-family: var(--mono); font-size: .8rem; color: var(--muted); margin-top: .55rem; }
+.hits { text-align: right; }
+.hits .n { font-family: "Ubuntu Bold", system-ui, sans-serif; font-size: clamp(2rem, 5vw, 2.8rem); color: var(--gold); line-height: 1; }
+.hits .l { color: var(--dim); font-size: .88rem; }
+.ticker {
+  margin-top: 1rem; border-top: 1px solid rgba(92,70,44,.6); padding-top: .7rem;
+  height: 6.1em; overflow: hidden; font-family: var(--mono); font-size: .78rem; line-height: 1.75;
+}
+.ticker div { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ticker div:first-child { color: var(--dim); }
+.ticker .no { color: rgb(110, 95, 72); }
+.demo-note { margin-top: .8rem; }
+.cta-row { display: flex; gap: .9rem; flex-wrap: wrap; justify-content: center; margin-top: 1.2rem; }
+
+/* ------- 2 · Die Zahl ------- */
+.thenumber {
+  min-height: 92svh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center; gap: 1.2rem;
+}
+.thenumber .lead { color: var(--muted); letter-spacing: .18em; text-transform: uppercase; font-size: .82rem; }
+.thenumber .huge {
+  color: var(--red); font-family: "Ubuntu Bold", system-ui, sans-serif;
+  font-size: clamp(3.4rem, 13vw, 8rem); line-height: 1;
+}
+.thenumber .huge small { display: block; font-size: clamp(1.15rem, 4vw, 2.2rem); margin-top: .5rem; }
+.thenumber .quote { max-width: 34ch; font-size: clamp(1rem, 2.4vw, 1.2rem); }
+
+/* ------- 3 · Zwei Türen ------- */
+.doors { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.2rem; }
+.door { padding: 1.7rem 1.6rem; text-align: center; }
+.door img { width: 108px; margin: 0 auto .9rem; filter: drop-shadow(0 8px 18px rgba(0,0,0,.6)); }
+.door h3 { color: var(--gold); font-size: 1.25rem; margin-bottom: .55rem; }
+.door p { color: var(--dim); font-size: .95rem; }
+
+/* ------- Text + Bild nebeneinander ------- */
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 2.4rem; align-items: center; }
+.split .shot { border-radius: 12px; border: 1px solid var(--frame); box-shadow: 0 18px 50px rgba(0,0,0,.6); }
+@media (max-width: 820px) { .split { grid-template-columns: 1fr; } }
+
+/* ------- 5 · Kein Angriffswerkzeug ------- */
+.proofs { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 1.1rem; margin-top: 1.4rem; }
+.proof { padding: 1.25rem 1.3rem; }
+.proof b { color: var(--gold); display: block; margin-bottom: .3rem; }
+.proof p { color: var(--dim); font-size: .93rem; }
+
+/* ------- 6 · Stufen ------- */
+.tiers { list-style: none; margin-top: 1.1rem; display: grid; gap: .55rem; }
+.tiers li {
+  display: flex; justify-content: space-between; gap: 1rem; align-items: baseline;
+  background: rgba(28,21,15,.85); border: 1px solid rgba(92,70,44,.7);
+  border-radius: 10px; padding: .65rem 1rem; font-size: .95rem;
+}
+.tiers .name { font-family: "Ubuntu Bold", system-ui, sans-serif; white-space: nowrap; }
+.tiers .desc { color: var(--muted); text-align: right; font-size: .85rem; }
+
+/* ------- 7 · Herunterladen ------- */
+.dl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .9rem; margin-top: 1.4rem; }
+.dl {
+  position: relative; display: block; padding: 1.15rem 1.2rem 1.05rem; text-decoration: none;
+  background: linear-gradient(rgba(38,29,20,.94), rgba(28,21,15,.94));
+  border: 1px solid var(--frame); border-radius: 12px;
+  transition: border-color .15s, transform .15s;
+}
+.dl:hover { border-color: var(--gold-mid); transform: translateY(-2px); }
+.dl .os { color: var(--text); font-family: "Ubuntu Bold", system-ui, sans-serif; font-size: 1.02rem; }
+.dl .arch { color: var(--dim); font-size: .85rem; margin-top: .1rem; }
+.dl .file { color: var(--muted); font-family: var(--mono); font-size: .68rem; margin-top: .55rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl.mine { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 12px 30px rgba(0,0,0,.5); }
+.dl .badge {
+  display: none; position: absolute; top: -.7rem; right: .7rem;
+  background: var(--gold); color: rgb(20,12,4); font-size: .68rem; font-weight: 700;
+  padding: .12rem .55rem; border-radius: 99px;
+}
+.dl.mine .badge { display: block; }
+.honest { margin-top: 2rem; padding: 1.4rem 1.5rem; }
+.honest ul { margin: .7rem 0 0 1.1rem; color: var(--dim); font-size: .93rem; display: grid; gap: .45rem; }
+code { font-family: var(--mono); font-size: .86em; background: var(--sunken); border: 1px solid rgba(92,70,44,.6); border-radius: 6px; padding: .1em .4em; }
+
+/* ------- Fuß ------- */
+footer { border-top: 1px solid rgba(92,70,44,.55); padding: 2.2rem 1.25rem 2.8rem; background: rgba(9,6,4,.65); }
+footer .row { display: flex; flex-wrap: wrap; gap: 1.4rem; justify-content: center; color: var(--dim); font-size: .9rem; }
+footer a { color: var(--dim); }
+footer a:hover { color: var(--gold); }
+footer .fineprint { text-align: center; margin-top: 1rem; }
+
+/* Sanftes Einblenden beim Scrollen — und gar keins bei "weniger Bewegung" */
+.reveal { opacity: 0; transform: translateY(16px); transition: opacity .6s ease, transform .6s ease; }
+.reveal.visible { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1; transform: none; transition: none; }
+  .dl { transition: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- 1 · Kopf -->
+<section class="hero">
+  <img class="chest" src="assets/icon.png" alt="Eine offene Holztruhe mit Karte, Kompass und Goldmünzen — das Zeichen von Schatzsuche" width="512" height="512">
+  <div class="wordmark">SCHATZSUCHE</div>
+  <h1>Ein Programm, das Bitcoin-Wallets errät — <em>und dabei beweist, dass das nicht funktioniert.</em></h1>
+
+  <div class="demo panel">
+    <div class="demo-grid">
+      <div>
+        <div class="bignum" id="rate">3&#8201;343</div>
+        <div class="unit">Wallets pro Sekunde</div>
+        <div class="statline"><span id="checked">0</span> geprüft&nbsp;&nbsp;·&nbsp;&nbsp;Laufzeit <span id="runtime">0s</span></div>
+      </div>
+      <div class="hits">
+        <div class="n">0</div>
+        <div class="l">Treffer</div>
+      </div>
+    </div>
+    <div class="ticker" id="ticker" aria-hidden="true"></div>
+    <p class="fineprint demo-note">Reine Nachbildung: Dieses Feld rechnet nichts Echtes — es zählt hoch und
+    würfelt Zeichenketten, die nur aussehen wie Adressen. Das echte Programm gibt es unten.</p>
+  </div>
+
+  <div class="cta-row">
+    <a class="btn btn-gold" href="#herunterladen">Herunterladen</a>
+    <a class="btn btn-wood" href="https://github.com/21clubz/schatzsuche">Quelltext ansehen</a>
+  </div>
+</section>
+
+<!-- 2 · Die Zahl -->
+<section class="thenumber">
+  <div class="lead reveal">Erwartete Wartezeit bis zum ersten Treffer</div>
+  <div class="huge reveal">10¹⁹&#8202;×<small>das Alter des Universums</small></div>
+  <p class="quote reveal">Kein Fehler — das ist das Ergebnis, und es zeigt, warum Bitcoin sicher ist.</p>
+  <p class="fineprint reveal">Gerechnet mit 3&#8201;343 Wallets pro Sekunde — voller Einsatz auf einem M1 —
+  gegen eine Datenbank aus 5&#8201;Millionen Adressen.</p>
+</section>
+
+<!-- 3 · Zwei Türen -->
+<section>
+  <div class="wrap">
+    <div class="cap reveal">Zwei Türen</div>
+    <div class="doors">
+      <div class="door panel reveal">
+        <img src="assets/door-search.png" alt="Eine Holztür mit Kompassrose — die Tür zur Zufallssuche" width="256" height="256">
+        <h3>Wallets würfeln</h3>
+        <p>Echte BIP-39-Seeds aus dem Zufall des Betriebssystems, abgeleitet und gegen fünf Millionen
+        Adressen mit Guthaben geprüft. Der Trefferzähler steht auf 0 und bleibt da — genau das ist
+        der Beweis.</p>
+      </div>
+      <div class="door panel reveal">
+        <img src="assets/door-recover.png" alt="Eine Holztür mit Schlüssel — die Tür zur Seed-Rettung" width="256" height="256">
+        <h3>Seed retten</h3>
+        <p>Du kennst die meisten deiner Wörter und deine Adresse? Dann ist der Rest kein Zufall mehr,
+        sondern eine Liste, die jemand durchgehen muss. Schatzsuche geht sie durch — auf deinem
+        Rechner, für dich.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 4 · Seed retten -->
+<section>
+  <div class="wrap split">
+    <div>
+      <div class="cap reveal">Die zweite Tür</div>
+      <h2 class="reveal">Halb vergessene Seeds retten</h2>
+      <p class="reveal">Der Normalfall sieht so aus: 21 von 24 Wörtern sitzen, bei dreien bist du dir
+      nicht sicher — und deine Adresse kennst du. Das ist kein Glücksspiel gegen 2²⁵⁶ mehr, sondern
+      eine endliche Liste von Kombinationen. Schatzsuche probiert sie der Reihe nach durch und hört
+      auf, wenn deine Adresse dabei herauskommt.</p>
+      <p class="dimtext reveal">Dafür gibt es Dienste, die einen Anteil deiner Wallet als Bezahlung nehmen.
+      In diesem Standardfall — die meisten Wörter bekannt, eine Adresse zum Abgleich — machen sie
+      denselben Schritt: ein Werkzeug über die möglichen Kombinationen laufen lassen. Hier kostet das
+      nichts, und du kannst nachlesen, was es tut.</p>
+      <p class="dimtext reveal">Fair bleibt fair: Es gibt schwere Fälle — kaputte Geräte, gelöschte
+      Datenträger, echte Forensik —, hinter denen tatsächlich Handarbeit steckt. Um die geht es hier
+      nicht.</p>
+      <p class="fineprint reveal">Zum Üben gibt es erfundene Übungswörter samt Adresse — du probierst den
+      ganzen Weg aus, ohne deine echten Wörter anzufassen.</p>
+    </div>
+    <img class="shot reveal" src="assets/recover.png" alt="Die Seed-Rettung in Schatzsuche: nummerierte Felder für die Wörter, erkannte Wörter grün markiert" width="1180" height="760" loading="lazy">
+  </div>
+</section>
+
+<!-- 5 · Kein Angriffswerkzeug -->
+<section>
+  <div class="wrap">
+    <div class="cap reveal">Sicherheit</div>
+    <h2 class="reveal">Warum das kein Angriffswerkzeug ist</h2>
+    <p class="dimtext reveal" style="max-width:44rem">Werkzeuge, die wirklich fremde Wallets
+    leeren, suchen nicht zufällig — sie zielen auf Brainwallets, kaputte Zufallsgeneratoren oder
+    Wortlisten. Schatzsuche tut nichts davon. Das ist der ganze Unterschied, und er ist nachlesbar.</p>
+    <div class="proofs">
+      <div class="proof panel reveal">
+        <b>Gleichverteilt über 2²⁵⁶</b>
+        <p>Jeder Seed kommt direkt aus dem Zufall des Betriebssystems. Nichts lenkt die Suche in
+        Richtung schwacher oder bekannt kaputter Schlüssel.</p>
+      </div>
+      <div class="proof panel reveal">
+        <b>Nichts verlässt deinen Rechner</b>
+        <p>Kein Server, kein Konto, kein Mitzählen. Ein Treffer landet auf deiner Festplatte und
+        sonst nirgends.</p>
+      </div>
+      <div class="proof panel reveal">
+        <b>Benachrichtigungen ohne Seed</b>
+        <p>Wer mag, lässt sich einen Fund melden — aber die Meldung kann gar keinen Seed enthalten:
+        das Feld dafür existiert im Code nicht.</p>
+      </div>
+      <div class="proof panel reveal">
+        <b>Nachprüfbar statt versprochen</b>
+        <p>MIT-Lizenz, der ganze Quelltext liegt offen. Der Kern steht in <code>src/engine.rs</code>:
+        Entropie rein, nichts dazwischen.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 6 · Dein Rechner -->
+<section>
+  <div class="wrap split">
+    <img class="shot reveal" src="assets/einstellungen.png" alt="Die Einstellungen von Schatzsuche: erkannte Kerne und die vier Stufen von Unauffällig bis Maximum" width="1180" height="760" loading="lazy">
+    <div>
+      <div class="cap reveal">Dein Rechner</div>
+      <h2 class="reveal">Es stellt sich selbst ein</h2>
+      <p class="reveal">Beim Start sieht sich Schatzsuche deinen Rechner an — „8 Kerne erkannt, 4 schnelle,
+      4 sparsame" — und wählt eine vernünftige Voreinstellung. Vier Stufen stehen zur Wahl:</p>
+      <ul class="tiers reveal">
+        <li><span class="name">Unauffällig</span><span class="desc">unter 1&#8201;% eines Kerns — der Lüfter bleibt aus (gemessen auf einem M1)</span></li>
+        <li><span class="name">Sparsam</span><span class="desc">die sparsamen Kerne — kühl und leise</span></li>
+        <li><span class="name">Ausgewogen</span><span class="desc">die schnelle Hälfte — empfohlen</span></li>
+        <li><span class="name">Maximum</span><span class="desc">alles, was da ist — der Rechner wird warm</span></li>
+      </ul>
+      <p class="dimtext reveal">Läuft auf macOS, Linux und Windows — als Fenster zum Doppelklicken oder
+      im Terminal.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 7 · Herunterladen -->
+<section id="herunterladen">
+  <div class="wrap">
+    <div class="cap reveal">Herunterladen</div>
+    <h2 class="reveal">Für deinen Rechner</h2>
+    <p class="dimtext reveal">Die Links führen immer zur neuesten Version auf GitHub.</p>
+    <div class="dl-grid reveal">
+      <a class="dl" id="dl-mac-arm" href="https://github.com/21clubz/schatzsuche/releases/latest/download/schatzsuche-macos-apple-silicon.tar.gz">
+        <span class="badge">passt zu deinem Rechner</span>
+        <div class="os">macOS</div><div class="arch">Apple-Chip (ab 2020)</div>
+        <div class="file">…macos-apple-silicon.tar.gz</div>
+      </a>
+      <a class="dl" id="dl-mac-intel" href="https://github.com/21clubz/schatzsuche/releases/latest/download/schatzsuche-macos-intel.tar.gz">
+        <span class="badge">passt zu deinem Rechner</span>
+        <div class="os">macOS</div><div class="arch">Intel (vor 2020)</div>
+        <div class="file">…macos-intel.tar.gz</div>
+      </a>
+      <a class="dl" id="dl-linux-x64" href="https://github.com/21clubz/schatzsuche/releases/latest/download/schatzsuche-linux-x86_64.tar.gz">
+        <span class="badge">passt zu deinem Rechner</span>
+        <div class="os">Linux</div><div class="arch">x86-64</div>
+        <div class="file">…linux-x86_64.tar.gz</div>
+      </a>
+      <a class="dl" id="dl-linux-arm" href="https://github.com/21clubz/schatzsuche/releases/latest/download/schatzsuche-linux-arm64.tar.gz">
+        <span class="badge">passt zu deinem Rechner</span>
+        <div class="os">Linux</div><div class="arch">ARM64 · Raspberry&nbsp;Pi</div>
+        <div class="file">…linux-arm64.tar.gz</div>
+      </a>
+      <a class="dl" id="dl-win" href="https://github.com/21clubz/schatzsuche/releases/latest/download/schatzsuche-windows-x86_64.zip">
+        <span class="badge">passt zu deinem Rechner</span>
+        <div class="os">Windows</div><div class="arch">x86-64</div>
+        <div class="file">…windows-x86_64.zip</div>
+      </a>
+    </div>
+
+    <div class="honest panel reveal">
+      <b style="color:var(--gold)">Beim ersten Start meldet sich dein Betriebssystem.</b>
+      <p class="dimtext" style="margin-top:.4rem">Die Programme sind nicht signiert — das bräuchte ein
+      bezahltes Entwicklerkonto. Der Quelltext liegt offen, und so kommst du am Hinweis vorbei:</p>
+      <ul>
+        <li><b>macOS</b> verweigert den ersten Start. Danach: <i>Systemeinstellungen → Datenschutz &amp;
+        Sicherheit → „Dennoch öffnen"</i>.</li>
+        <li><b>Windows</b> zeigt einen SmartScreen-Hinweis: <i>Weitere Informationen → Trotzdem
+        ausführen</i>.</li>
+        <li>Wem das zu heikel ist: selbst bauen dauert eine Minute — <code>cargo build --release</code>,
+        die Anleitung steht im <a href="https://github.com/21clubz/schatzsuche#readme">README</a>.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 8 · Fuß -->
+<footer>
+  <div class="row">
+    <a href="https://github.com/21clubz/schatzsuche/blob/main/LICENSE">MIT-Lizenz</a>
+    <a href="https://github.com/21clubz/schatzsuche">Quelltext auf GitHub</a>
+    <a href="https://x.com/21clubz">@21clubz</a>
+  </div>
+  <p class="fineprint">Es findet nichts. Nicht selten — nie. Wer dir etwas anderes verspricht, verkauft
+  dir etwas.<br>Überschrift-Schrift: Ubuntu Bold, <a href="assets/UBUNTU-FONT-LICENCE.txt">Ubuntu Font Licence</a>.</p>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* Zahlen mit schmalem Leerzeichen gruppieren, wie im Programm: 3 343 */
+  function fmt(n) {
+    return Math.floor(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  }
+
+  /* Erfundene Adressen, die nur echt aussehen */
+  var bech = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+  var b58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  function fakeAddress() {
+    var s, i;
+    if (Math.random() < 0.6) {
+      s = "bc1q";
+      for (i = 0; i < 38; i++) s += bech[(Math.random() * bech.length) | 0];
+    } else {
+      s = Math.random() < 0.5 ? "1" : "3";
+      for (i = 0; i < 33; i++) s += b58[(Math.random() * b58.length) | 0];
+    }
+    return s;
+  }
+
+  var ticker = document.getElementById("ticker");
+  function pushAddress() {
+    var d = document.createElement("div");
+    d.innerHTML = fakeAddress() + '  <span class="no">— kein Guthaben</span>';
+    ticker.insertBefore(d, ticker.firstChild);
+    while (ticker.childNodes.length > 6) ticker.removeChild(ticker.lastChild);
+  }
+
+  var rateEl = document.getElementById("rate");
+  var checkedEl = document.getElementById("checked");
+  var runtimeEl = document.getElementById("runtime");
+
+  if (reduced) {
+    /* Gar keine Bewegung: ein eingefrorener, ehrlicher Zustand */
+    var i;
+    for (i = 0; i < 5; i++) pushAddress();
+    checkedEl.textContent = fmt(1204731);
+    runtimeEl.textContent = "6 Min";
+  } else {
+    var checked = 0;
+    var start = Date.now();
+    var last = start;
+    function tick() {
+      var now = Date.now();
+      var t = (now - start) / 1000;
+      /* Tempo wandert leicht um die gemessene M1-Spitze */
+      var rate = 3343 + Math.sin(t / 3.1) * 60 + (Math.random() - 0.5) * 40;
+      checked += rate * ((now - last) / 1000);
+      last = now;
+      rateEl.textContent = fmt(rate);
+      checkedEl.textContent = fmt(checked);
+      runtimeEl.textContent = t < 60 ? Math.floor(t) + "s" : Math.floor(t / 60) + " Min " + Math.floor(t % 60) + "s";
+    }
+    setInterval(tick, 140);
+    setInterval(pushAddress, 650);
+    tick();
+    pushAddress();
+  }
+
+  /* Passende Download-Kachel hervorheben — die anderen bleiben anklickbar */
+  var ua = navigator.userAgent;
+  var id = null;
+  if (/Windows/i.test(ua)) id = "dl-win";
+  else if (/Android|iPhone|iPad/i.test(ua)) id = null;
+  else if (/Macintosh|Mac OS/i.test(ua)) id = "dl-mac-arm";
+  else if (/Linux/i.test(ua)) id = /aarch64|arm64/i.test(ua) ? "dl-linux-arm" : "dl-linux-x64";
+  if (id) {
+    var el = document.getElementById(id);
+    if (el) el.classList.add("mine");
+  }
+
+  /* Sanftes Einblenden beim Scrollen */
+  if (!reduced && "IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add("visible"); io.unobserve(e.target); }
+      });
+    }, { threshold: 0.12 });
+    document.querySelectorAll(".reveal").forEach(function (el) { io.observe(el); });
+  } else {
+    document.querySelectorAll(".reveal").forEach(function (el) { el.classList.add("visible"); });
+  }
+})();
+</script>
+</body>
+</html>
