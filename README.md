@@ -117,9 +117,14 @@ Dump läuft. Mit einem echten Dump funktionierter Adressen stattdessen:
 schatzsuche build-db --input dump.tsv
 ```
 
-Ohne Argumente startet das Programm im Terminal. Unter macOS öffnet der
-Doppelklick auf das App-Bundle ein Fenster; auf allen Systemen erzwingt `--gui`
-das Fenster.
+Ohne Argumente startet das Programm im Terminal, mit einer eigenen Oberfläche
+dort — Tempo, Verlauf, Hochrechnung und Fundfach, dieselben Zahlen wie im
+Fenster. Unter macOS öffnet der Doppelklick auf das App-Bundle ein Fenster; auf
+allen Systemen erzwingt `--gui` das Fenster.
+
+Wer die Ausgabe in eine Datei oder durch eine Pipe schickt, bekommt statt der
+Oberfläche eine Statuszeile je Sekunde — die braucht kein Terminal. `--headless`
+verlangt dasselbe ausdrücklich, etwa zum Messen des Durchsatzes.
 
 Im Fenster **rechnet zunächst nichts**. Es öffnet auf einer Gabelung — Suche oder
 Seed-Rettung —, und auch dahinter fängt die Suche erst an, wenn du den Knopf

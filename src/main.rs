@@ -1,6 +1,6 @@
 //! Command-line entry point.
 
-use std::io::{BufReader, Write};
+use std::io::{BufReader, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
 use std::sync::Arc;
@@ -24,6 +24,11 @@ use schatzsuche::{tui, util};
 #[derive(Parser)]
 #[command(
     name = "schatzsuche",
+    // Aus `Cargo.toml`, damit `--version` nicht die eine Stelle ist, an der
+    // eine Nummer nach einem Release stehen bleibt. Es ist das Erste, was
+    // jemand eintippt, der wissen will, ob er die aktuelle Fassung hat — und
+    // es fehlte: `--version` beantwortete clap mit „unexpected argument".
+    version,
     about = "Random BIP-39 seed search against a local set of funded addresses",
     long_about = "Generates mnemonics from OS entropy and tests their BIP-44/49/84 \
                   addresses against a local database.\n\n\
@@ -990,7 +995,29 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
         .map_err(|e| format!("window error: {e}"))?;
     } else {
         println!("Schatzsuche");
-        boot()?;
+        // Im Fenster wird aus einer fehlenden Datenbank ein Angebot mit Knopf.
+        // Im Terminal stand dieselbe Meldung ohne jeden nächsten Schritt da —
+        // und der Befehl, der sie behebt, steht bei jedem *anderen*
+        // Öffnungsfehler dabei, nur bei dem einen nicht, der auf einem neuen
+        // Rechner tatsächlich vorkommt. Gefragt wird `progress`, nicht der
+        // Fehlertext: eine Meldung, die man auf ihren Wortlaut abklopft, ist
+        // beim nächsten Umformulieren still kaputt.
+        //
+        // Angehängt statt selbst ausgegeben: der Fehler selbst wird erst ganz
+        // am Ende in `main` gedruckt, ein eigenes `eprintln!` hier stünde also
+        // *über* der Meldung, auf die es antwortet.
+        if let Err(e) = boot() {
+            if progress.missing_db().is_some() {
+                return Err(format!(
+                    "{e}\n\n\
+                     So legst du eine an — eine erfundene Übungsliste:\n\
+                     \x20 schatzsuche synth-db --count 5000000\n\n\
+                     Oder aus einem echten Datensatz funktionierter Adressen:\n\
+                     \x20 schatzsuche build-db --input dump.tsv"
+                ));
+            }
+            return Err(e);
+        }
         println!(
             "  Datenbank  : {} Adressen, Filter {:.1} MB",
             progress.funded(),
@@ -1036,7 +1063,39 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
                 c.request_stop();
             });
         }
-        run_headless(&stats, &control, rx, progress.funded(), per_seed);
+
+        // Die Terminal-Oberfläche aus `tui.rs`: 27 Tests, eine fertige
+        // Hauptschleife — und bis hierher kein Weg, sie zu starten. `--headless`
+        // versprach in der Hilfe „ohne die TUI zu laufen", während es gar keine
+        // gab, die man hätte weglassen können.
+        //
+        // Sie braucht ein echtes Terminal: `enable_raw_mode` scheitert an einer
+        // Umleitung in eine Datei oder eine Pipe, und ein Programm, das sich
+        // beim Protokollieren verabschiedet, wäre der schlechtere Tausch. Wo
+        // kein Terminal ist, bleibt es bei den Zeilen — dieselbe Ausgabe wie
+        // `--headless`, nur ungefragt.
+        let interactive = !cli.headless && std::io::stdout().is_terminal();
+        if interactive {
+            let app = tui::App::new(
+                Arc::clone(&stats),
+                Arc::clone(&control),
+                rx,
+                make_writer(&cfg).load_all().unwrap_or_default(),
+                progress.funded(),
+                per_seed,
+                control.active_threads(),
+                progress.bloom_bytes(),
+                progress.db_bytes(),
+            );
+            let c = Arc::clone(&control);
+            tui::run(app, move || c.request_stop()).map_err(|e| e.to_string())?;
+        } else {
+            if !cli.headless {
+                println!("(kein Terminal erkannt — einfache Zeilenausgabe)");
+                println!();
+            }
+            run_headless(&stats, &control, rx, progress.funded(), per_seed);
+        }
     }
 
     if let Some(secs) = cli.duration {
