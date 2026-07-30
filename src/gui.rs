@@ -136,6 +136,18 @@ pub struct GuiApp {
     balance_api: String,
     /// Ob die geladene Adressliste eine selbst erzeugte Übungsliste ist.
     practice_list: bool,
+    /// Wo die Einstellungsdatei liegt — zum Speichern der Meldewege.
+    config_path: std::path::PathBuf,
+    /// Die Meldewege, wie sie im Fenster bearbeitet werden.
+    ///
+    /// Eine eigene Kopie und nicht die laufende Einstellung: Getipptes soll
+    /// erst wirken, wenn jemand auf Speichern drückt, und ein halb
+    /// eingetragener Bot-Token ist keine Einstellung, sondern ein Zwischenstand.
+    alerts: crate::config::Alerts,
+    /// Was beim letzten Speichern herauskam. `Ok` die Bestätigung, `Err` der
+    /// Grund — beides gehört unter die Knöpfe und nicht in eine Protokollzeile,
+    /// die niemand sieht.
+    alerts_note: Option<Result<String, String>>,
 
     logo: Option<TextureHandle>,
     /// The map and the key on the opening fork, uploaded on first sight of
@@ -284,6 +296,16 @@ impl GuiApp {
             db_path: paths.database,
             balance_api: paths.balance_api,
             practice_list: false,
+            // Von der Platte gelesen und nicht durchgereicht: das Fenster
+            // bearbeitet genau die Datei, in die es gleich zurückschreibt.
+            // Lässt sie sich nicht lesen, stehen hier die Voreinstellungen —
+            // alle Meldewege aus. Eine kaputte Datei kommt hier ohnehin nicht
+            // an, weil das Programm damit gar nicht erst startet.
+            alerts: crate::config::Config::load_or_default(&paths.config)
+                .unwrap_or_default()
+                .alerts,
+            config_path: paths.config,
+            alerts_note: None,
             logo: None,
             doors: None,
             wood: None,
@@ -1453,6 +1475,55 @@ fn centring_lead_for(content: f32, room: f32) -> f32 {
 fn remember_body_height(ui: &Ui, key: &'static str, height: f32) {
     ui.ctx()
         .data_mut(|d| d.insert_temp(egui::Id::new(key), height));
+}
+
+/// Der erste eingeschaltete Meldeweg, dem noch etwas zum Funktionieren fehlt.
+///
+/// `None` heißt: alles, was an ist, könnte auch etwas verschicken.
+///
+/// Warum das hier steht und nicht in [`crate::config::Config::validate`]: Was
+/// dort steht, verhindert den **Start** des Programms. Ein Mailserver, der noch
+/// `smtp.example.com` heißt, ist ein unfertiger Eintrag und kein Grund, jemanden
+/// aus seinem eigenen Programm auszusperren — zumal der Bildschirm, auf dem er
+/// das reparieren würde, dieser hier ist. Gefangen wird es darum beim
+/// Speichern, wo der Mensch danebensitzt und es sofort richtigstellen kann.
+///
+/// Geprüft wird nur, was ohne Netz feststellbar ist: dass ein Feld leer ist
+/// oder noch den Beispielwert trägt. Ob der Server antwortet, weiß man erst,
+/// wenn man ihn fragt — und das tut dieses Programm erst, wenn es etwas zu
+/// melden gibt.
+fn missing_alert_field(a: &crate::config::Alerts) -> Option<String> {
+    let blank = |s: &str| s.trim().is_empty();
+    if a.ntfy.enabled && blank(&a.ntfy.base_url) {
+        return Some(
+            "ntfy: Ohne Server geht es nicht. Für den öffentlichen Dienst: \
+                     https://ntfy.sh"
+                .into(),
+        );
+    }
+    if a.telegram.enabled && (blank(&a.telegram.bot_token) || blank(&a.telegram.chat_id)) {
+        return Some(
+            "Telegram: Es fehlt der Bot-Token oder die Chat-Kennung. Beides gibt dir \
+             @BotFather in Telegram."
+                .into(),
+        );
+    }
+    if a.smtp.enabled {
+        if blank(&a.smtp.host) || a.smtp.host.trim() == "smtp.example.com" {
+            return Some(
+                "E-Mail: Da steht noch der Beispielserver. Trag den Server deines \
+                 Mailanbieters ein."
+                    .into(),
+            );
+        }
+        if blank(&a.smtp.from) || blank(&a.smtp.to) {
+            return Some("E-Mail: Absender und Empfänger müssen ausgefüllt sein.".into());
+        }
+    }
+    if a.webhook.enabled && blank(&a.webhook.url) {
+        return Some("Webhook: Ohne Adresse geht die Meldung nirgendwohin.".into());
+    }
+    None
 }
 
 /// Der Name des Dienstes aus einer Schnittstellen-Adresse, für Sätze, in denen
@@ -3328,10 +3399,10 @@ impl GuiApp {
         let tex = self.logo_texture(ctx);
         // Innerhalb der Panel-Closures ist `self` ausgeliehen; der Wechsel des
         // Bildschirms muss also bis danach warten.
-        let mut open_recover = false;
+        let mut to_hub = false;
 
         let mut jump_to_find = false;
-        self.draw_head(ctx, &tex, paused, &mut open_recover, &mut jump_to_find);
+        self.draw_head(ctx, &tex, paused, &mut to_hub, &mut jump_to_find);
         self.draw_foot(ctx);
         // Zwischen den Leisten und dem Inhalt: egui gibt jedem Panel den Platz,
         // den die vorherigen übrig lassen, und eine später geöffnete Schublade
@@ -3436,8 +3507,14 @@ impl GuiApp {
                     });
             });
 
-        if open_recover {
-            self.open_recover(Screen::Dashboard);
+        if to_hub {
+            // Der Stempel weg, damit die Gabelung wieder aufblendet statt
+            // hart zu erscheinen — derselbe Handgriff wie beim Verlassen der
+            // Seed-Rettung. Die Suche läuft dabei weiter: niemand hat sie
+            // angehalten, und sie wieder anzuhalten wäre eine Entscheidung,
+            // die dieser Knopf nicht trifft.
+            ctx.memory_mut(|m| m.data.remove::<f64>(egui::Id::new("chooser_at")));
+            self.screen = Screen::Chooser;
         } else if jump_to_find {
             // Der Klick auf den Wegweiser ist das bewusste Aufdecken.
             self.settings_open = false;
@@ -3553,7 +3630,7 @@ impl GuiApp {
         ctx: &egui::Context,
         tex: &TextureHandle,
         paused: bool,
-        open_recover: &mut bool,
+        to_hub: &mut bool,
         jump_to_find: &mut bool,
     ) {
         egui::TopBottomPanel::top("head")
@@ -3634,13 +3711,20 @@ impl GuiApp {
                         }
                         ui.add_space(theme::S2);
                         ui.add_space(theme::S2);
+                        // Führt zur Gabelung zurück, nicht in die Seed-Rettung.
+                        // Vorher sprang dieser Knopf sofort in den anderen
+                        // Betriebsmodus: ein Klick, und der Bildschirm war ein
+                        // ganz anderer, ohne Zwischenschritt und ohne dass
+                        // jemand gesagt hätte, wohin es geht. Der Weg über die
+                        // Startseite kostet einen Klick mehr und zeigt dafür
+                        // beide Türen — mitsamt der, aus der man gerade kommt.
                         if ui
-                            .add(widgets::button_quiet("Seed retten"))
-                            .on_hover_text("Eine eigene Seed wiederherstellen, der ein Wort fehlt")
+                            .add(widgets::button_quiet("Hub"))
+                            .on_hover_text("Zurück zur Startseite mit den zwei Türen")
                             .clicked()
                         {
                             crate::ui::feel::bump(crate::ui::feel::Bump::Switch);
-                            *open_recover = true;
+                            *to_hub = true;
                         }
                     });
                 });
@@ -4635,6 +4719,12 @@ impl GuiApp {
                     ui.separator();
                     ui.add_space(theme::S2);
 
+                    self.draw_alert_section(ui);
+
+                    ui.add_space(theme::S2);
+                    ui.separator();
+                    ui.add_space(theme::S2);
+
                     ui.horizontal(|ui| {
                         let mut on = self.expert_unlocked;
                         // Unlocking is gated; switching off never is.
@@ -4846,6 +4936,282 @@ impl GuiApp {
                     });
                 });
         }
+    }
+
+    /// Die Meldewege: wer erfährt von einem Fund, und wie.
+    ///
+    /// Bis hierher war das nur zu ändern, indem jemand `config.toml` in einem
+    /// Texteditor aufmachte — bei einem Programm, dessen ganzer Anspruch der
+    /// Doppelklick ist. Die Folge war nicht bloß Unbequemlichkeit: Die
+    /// Systemmeldung war ab Werk an, ohne dass ihr je jemand zugestimmt hätte,
+    /// und die vier Wege ins Netz waren aus, ohne dass es jemand erfahren
+    /// hätte. Beides stand nur in einer Datei, die niemand aufmacht.
+    ///
+    /// Was hier eingetragen wird, wirkt **beim nächsten Start**. Die Meldekette
+    /// wird beim Start einmal aus der Einstellung gebaut und dann von den
+    /// Arbeitern geteilt; sie mitten im Lauf auszutauschen wäre eine
+    /// Änderung an der Maschinerie für einen Knopf, den man einmal im Jahr
+    /// drückt. Der Hinweis steht deshalb im Fenster, statt dass jemand rätselt.
+    fn draw_alert_section(&mut self, ui: &mut Ui) {
+        ui.label(
+            RichText::new("BENACHRICHTIGUNGEN")
+                .color(pal().primary)
+                .size(theme::SMALL)
+                .strong(),
+        );
+        ui.add_space(theme::S1);
+        ui.label(
+            RichText::new(
+                "Wer erfährt es, wenn etwas gefunden wird. Verschickt werden Zeitpunkt, \
+                 Rechnername, Adresse und Guthaben — die Seed-Wörter nie.",
+            )
+            .color(pal().muted)
+            .size(theme::SMALL),
+        );
+        widgets::disclosure(
+            ui,
+            "warum_keine_woerter",
+            "Die Wörter sind das Geld. Ein Meldedienst läuft auf fremden Rechnern, und eine \
+             Nachricht, die dort liegen bleibt, wäre die Wallet. Darum stehen sie nur in der \
+             Fundliste auf dieser Platte — die Meldung sagt bloß, dass du nachsehen sollst.",
+        );
+        ui.add_space(theme::S2);
+
+        // Die Systemmeldung zuerst: sie ist die einzige, die nichts verlässt,
+        // die einzige ohne Einrichtung — und die einzige, die ab Werk an ist.
+        ui.checkbox(
+            &mut self.alerts.desktop.enabled,
+            RichText::new("Meldung auf diesem Rechner")
+                .color(pal().text)
+                .size(theme::BODY),
+        );
+        ui.label(
+            RichText::new("Bleibt hier. Kein Konto, keine Einrichtung, kein Netz.")
+                .color(pal().muted)
+                .size(theme::SMALL),
+        );
+        ui.add_space(theme::S2);
+
+        let field = |ui: &mut Ui, label: &str, value: &mut String, hint: &str, secret: bool| {
+            ui.label(RichText::new(label).color(pal().dim).size(theme::SMALL));
+            ui.add(
+                egui::TextEdit::singleline(value)
+                    .desired_width(ui.available_width())
+                    .hint_text(hint)
+                    .password(secret)
+                    .font(mono(theme::SMALL)),
+            );
+            ui.add_space(theme::S1);
+        };
+
+        // ntfy: der einzige Weg ohne Konto, darum der erste der vier.
+        ui.checkbox(
+            &mut self.alerts.ntfy.enabled,
+            RichText::new("ntfy — Meldung aufs Handy")
+                .color(pal().text)
+                .size(theme::BODY),
+        );
+        if self.alerts.ntfy.enabled {
+            ui.label(
+                RichText::new(
+                    "Kostenlos und ohne Anmeldung: In der ntfy-App ein Thema abonnieren und \
+                     denselben Namen hier eintragen. Wer den Namen kennt, liest mit — nimm \
+                     etwas Langes, das niemand rät.",
+                )
+                .color(pal().muted)
+                .size(theme::SMALL),
+            );
+            ui.add_space(theme::S1);
+            field(
+                ui,
+                "Thema",
+                &mut self.alerts.ntfy.topic,
+                "mindestens 16 Zeichen, nicht zu erraten",
+                false,
+            );
+            field(
+                ui,
+                "Server",
+                &mut self.alerts.ntfy.base_url,
+                "https://ntfy.sh",
+                false,
+            );
+        }
+        ui.add_space(theme::S1);
+
+        ui.checkbox(
+            &mut self.alerts.telegram.enabled,
+            RichText::new("Telegram")
+                .color(pal().text)
+                .size(theme::BODY),
+        );
+        if self.alerts.telegram.enabled {
+            ui.label(
+                RichText::new(
+                    "Braucht einen eigenen Bot (über @BotFather) und die Kennung des Chats, \
+                     in den er schreiben soll.",
+                )
+                .color(pal().muted)
+                .size(theme::SMALL),
+            );
+            ui.add_space(theme::S1);
+            field(
+                ui,
+                "Bot-Token",
+                &mut self.alerts.telegram.bot_token,
+                "123456:ABC…",
+                true,
+            );
+            field(
+                ui,
+                "Chat-Kennung",
+                &mut self.alerts.telegram.chat_id,
+                "z. B. 987654321",
+                false,
+            );
+        }
+        ui.add_space(theme::S1);
+
+        ui.checkbox(
+            &mut self.alerts.smtp.enabled,
+            RichText::new("E-Mail").color(pal().text).size(theme::BODY),
+        );
+        if self.alerts.smtp.enabled {
+            ui.label(
+                RichText::new(
+                    "Die Zugangsdaten deines Mailanbieters. Sie stehen danach in der \
+                     Einstellungsdatei auf dieser Platte — nur für dich lesbar, aber im \
+                     Klartext. Nimm ein App-Passwort, wenn dein Anbieter eines anbietet.",
+                )
+                .color(pal().muted)
+                .size(theme::SMALL),
+            );
+            ui.add_space(theme::S1);
+            field(
+                ui,
+                "Server",
+                &mut self.alerts.smtp.host,
+                "smtp.beispiel.de",
+                false,
+            );
+            let mut port = self.alerts.smtp.port.to_string();
+            ui.label(RichText::new("Port").color(pal().dim).size(theme::SMALL));
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut port)
+                        .desired_width(80.0)
+                        .font(mono(theme::SMALL)),
+                )
+                .changed()
+            {
+                // Unlesbares stehen lassen statt auf null zu setzen: wer die
+                // 587 löscht, um 465 zu tippen, hat zwischendurch ein leeres
+                // Feld, und ein Port 0 wäre eine falsche Antwort darauf.
+                if let Ok(p) = port.trim().parse::<u16>() {
+                    self.alerts.smtp.port = p;
+                }
+            }
+            ui.add_space(theme::S1);
+            field(
+                ui,
+                "Benutzername",
+                &mut self.alerts.smtp.username,
+                "meist die Mailadresse",
+                false,
+            );
+            field(ui, "Passwort", &mut self.alerts.smtp.password, "", true);
+            field(
+                ui,
+                "Absender",
+                &mut self.alerts.smtp.from,
+                "ich@beispiel.de",
+                false,
+            );
+            field(
+                ui,
+                "Empfänger",
+                &mut self.alerts.smtp.to,
+                "ich@beispiel.de",
+                false,
+            );
+            ui.checkbox(
+                &mut self.alerts.smtp.tls_implicit,
+                RichText::new("Verschlüsselt ab dem ersten Byte (Port 465)")
+                    .color(pal().dim)
+                    .size(theme::SMALL),
+            );
+        }
+        ui.add_space(theme::S1);
+
+        ui.checkbox(
+            &mut self.alerts.webhook.enabled,
+            RichText::new("Webhook").color(pal().text).size(theme::BODY),
+        );
+        if self.alerts.webhook.enabled {
+            ui.label(
+                RichText::new("Für eigene Zwecke: die Meldung geht als JSON an diese Adresse.")
+                    .color(pal().muted)
+                    .size(theme::SMALL),
+            );
+            ui.add_space(theme::S1);
+            field(
+                ui,
+                "Adresse",
+                &mut self.alerts.webhook.url,
+                "https://…",
+                false,
+            );
+        }
+
+        ui.add_space(theme::S2);
+        if ui.add(widgets::button_primary("Speichern")).clicked() {
+            self.alerts_note = Some(self.save_alerts());
+        }
+        ui.add_space(theme::S1);
+        match &self.alerts_note {
+            Some(Ok(msg)) => widgets::note(ui, pal().green, msg),
+            Some(Err(msg)) => widgets::note(ui, pal().alert, msg),
+            None => {
+                ui.label(
+                    RichText::new("Änderungen wirken beim nächsten Start des Programms.")
+                        .color(pal().muted)
+                        .size(theme::SMALL),
+                );
+            }
+        }
+    }
+
+    /// Schreibt die bearbeiteten Meldewege in die Einstellungsdatei.
+    ///
+    /// Gelesen wird dafür zuerst noch einmal von der Platte, und nur der
+    /// Abschnitt der Meldewege wird ersetzt: alles andere in der Datei gehört
+    /// nicht diesem Bildschirm, und eine im Speicher gehaltene Kopie wäre
+    /// älter als das, was inzwischen dort steht.
+    ///
+    /// Geprüft wird mit derselben Prüfung, die auch der Start benutzt. Sonst
+    /// ließe sich hier eine Datei schreiben, mit der das Programm danach nicht
+    /// mehr hochkommt — und der Bildschirm, auf dem man das repariert, ist
+    /// genau dieser.
+    fn save_alerts(&mut self) -> Result<String, String> {
+        if let Some(missing) = missing_alert_field(&self.alerts) {
+            return Err(missing);
+        }
+        let mut cfg = crate::config::Config::load_or_default(&self.config_path)
+            .map_err(|e| format!("Die Einstellungsdatei ließ sich nicht lesen.\n\n{e}"))?;
+        cfg.alerts = self.alerts.clone();
+        cfg.validate()
+            .map_err(|e| format!("So geht es nicht:\n\n{e}"))?;
+        cfg.save(&self.config_path)
+            .map_err(|e| format!("Gespeichert werden konnte es nicht.\n\n{e}"))?;
+
+        let on = cfg.notifiers().len() + usize::from(cfg.alerts.desktop.enabled);
+        Ok(match on {
+            0 => "Gespeichert. Es ist kein Meldeweg an — ein Fund stünde dann nur in der \
+                  Fundliste auf dieser Platte."
+                .to_string(),
+            1 => "Gespeichert. Ein Meldeweg ist an. Er wirkt beim nächsten Start.".to_string(),
+            n => format!("Gespeichert. {n} Meldewege sind an. Sie wirken beim nächsten Start."),
+        })
     }
 
     /// Wo die Dateien des Programms liegen — mit einem Knopf, der sie zeigt.
@@ -5980,6 +6346,97 @@ mod tests {
             assert!(GuiApp::counterproductive_at(max, max, Priority::Background));
             assert!(!GuiApp::counterproductive_at(max, max, Priority::Normal));
         }
+    }
+
+    /// Ein Meldeweg, der an ist, aber nichts verschicken kann, muss beim
+    /// Speichern auffallen — nicht erst an dem Tag, an dem es darauf ankäme.
+    #[test]
+    fn a_half_filled_alert_channel_is_caught_before_it_is_saved() {
+        use crate::config::Alerts;
+
+        // Ab Werk ist nur die Meldung auf diesem Rechner an, und die braucht
+        // nichts. Daran darf die Prüfung nicht hängen bleiben.
+        assert!(super::missing_alert_field(&Alerts::default()).is_none());
+
+        // Der Beispielserver aus der Vorlage ist kein Mailserver.
+        let mut a = Alerts::default();
+        a.smtp.enabled = true;
+        let complained = super::missing_alert_field(&a).expect("smtp.example.com muss auffallen");
+        assert!(
+            complained.contains("Beispielserver"),
+            "unerwarteter Text: {complained}"
+        );
+
+        // Server richtig, aber ohne Absender und Empfänger geht es trotzdem
+        // nicht — und die Prüfung muss den zweiten Mangel auch dann noch
+        // sehen, wenn der erste behoben ist.
+        a.smtp.host = "smtp.posteo.de".into();
+        assert!(super::missing_alert_field(&a).is_some());
+        a.smtp.from = "ich@posteo.de".into();
+        a.smtp.to = "ich@posteo.de".into();
+        assert!(super::missing_alert_field(&a).is_none());
+
+        // Telegram ohne Token, Webhook ohne Adresse.
+        let mut t = Alerts::default();
+        t.telegram.enabled = true;
+        assert!(super::missing_alert_field(&t).is_some());
+
+        let mut w = Alerts::default();
+        w.webhook.enabled = true;
+        assert!(super::missing_alert_field(&w).is_some());
+
+        // Ein ausgeschalteter Weg darf unvollständig sein, ohne zu stören:
+        // so sieht ein Eintrag aus, den jemand vorbereitet und noch nicht
+        // benutzt.
+        let mut off = Alerts::default();
+        off.smtp.host.clear();
+        off.telegram.bot_token.clear();
+        assert!(super::missing_alert_field(&off).is_none());
+    }
+
+    /// Was das Fenster speichert, muss das Programm danach wieder laden können
+    /// — und alles daneben muss die Runde überstehen.
+    #[test]
+    fn saved_alerts_survive_a_round_trip_with_the_rest_of_the_file() {
+        let dir = std::env::temp_dir().join(format!("sc-alerts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+
+        // Eine Datei, in der auch außerhalb der Meldewege etwas Eigenes steht.
+        let mut cfg = crate::config::Config::default();
+        cfg.run.threads = 6;
+        cfg.design.theme = "mahogany".into();
+        cfg.save(&path).expect("schreiben");
+
+        // Wie das Fenster es tut: laden, nur die Meldewege ersetzen, sichern.
+        let mut edited = crate::config::Config::load(&path).expect("lesen");
+        edited.alerts.desktop.enabled = false;
+        edited.alerts.ntfy.enabled = true;
+        edited.alerts.ntfy.topic = "ein-thema-das-lang-genug-ist".into();
+        edited.save(&path).expect("zurückschreiben");
+
+        let again = crate::config::Config::load(&path).expect("erneut lesen");
+        assert!(again.alerts.ntfy.enabled);
+        assert_eq!(again.alerts.ntfy.topic, "ein-thema-das-lang-genug-ist");
+        assert!(!again.alerts.desktop.enabled);
+        // Und das, was diesen Bildschirm nichts angeht, steht unverändert da.
+        assert_eq!(again.run.threads, 6);
+        assert_eq!(again.design.theme, "mahogany");
+        // Die geschriebene Datei muss auch geprüft durchgehen, sonst hätte das
+        // Fenster den Start unmöglich gemacht.
+        assert!(again.validate().is_ok());
+
+        // In dieser Datei steht künftig ein Mailpasswort und ein Bot-Token,
+        // weil das Fenster sie dort hineinschreibt. Also darf sie niemandem
+        // sonst auf diesem Rechner gehören.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "die Einstellungsdatei steht auf {mode:o}");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Der Abstand, der einen Inhalt in die Mitte rückt, und die zwei Fälle,

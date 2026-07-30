@@ -345,8 +345,27 @@ impl Config {
     }
 
     pub fn write_template(path: &std::path::Path) -> Result<(), String> {
-        let text = toml::to_string_pretty(&Config::default())
-            .map_err(|e| format!("cannot serialise config: {e}"))?;
+        Config::default().save(path)
+    }
+
+    /// Schreibt diese Einstellungen nach `path`, mitsamt dem erklärenden Kopf.
+    ///
+    /// Das Gegenstück zu [`Config::load`], und der Weg, auf dem das Fenster die
+    /// Meldewege speichert: die waren bis jetzt nur zu ändern, indem jemand
+    /// die Datei von Hand aufmachte.
+    ///
+    /// Die Kommentare überleben, weil sie hier im Programm stehen und nicht in
+    /// der Datei — geschrieben wird jedes Mal Kopf plus Werte. Wer sich selbst
+    /// Notizen in die Datei geschrieben hat, verliert sie dabei; das ist der
+    /// Preis dafür, dass die Erklärungen nicht Stück für Stück verschwinden,
+    /// sobald das Fenster einmal speichert.
+    ///
+    /// `write_owner_only` und nicht `fs::write`: hier stehen Bot-Token und ein
+    /// Mailpasswort drin, und die gehen niemanden sonst auf diesem Rechner
+    /// etwas an.
+    pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
+        let text =
+            toml::to_string_pretty(self).map_err(|e| format!("cannot serialise config: {e}"))?;
         let header = "\
 # Schatzsuche configuration.
 #
