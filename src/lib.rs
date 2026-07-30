@@ -11,6 +11,7 @@
 
 pub mod address;
 pub mod alert;
+pub mod balance;
 pub mod bench;
 pub mod bip32;
 pub mod bip39;
@@ -27,4 +28,5 @@ pub mod recover_ui;
 pub mod startup;
 pub mod stats;
 pub mod tui;
+pub mod ui;
 pub mod util;

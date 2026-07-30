@@ -79,7 +79,7 @@ impl AlertPayload {
             address: hit.address.clone(),
             balance_sats: hit.balance_sats,
             balance_btc: hit.balance_btc.clone(),
-            note: "Seed is stored locally in hits.jsonl on the host above. \
+            note: "Seed is stored locally in hits.txt on the host above. \
                    It is deliberately not included in this message."
                 .to_string(),
             seeds_tested: None,

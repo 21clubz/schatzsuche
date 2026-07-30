@@ -22,12 +22,14 @@ pub struct Config {
     pub hits: Hits,
     pub alerts: Alerts,
     pub heartbeat: Heartbeat,
+    pub balance: Balance,
+    pub design: Design,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Run {
-    /// 12 or 24.
+    /// Any BIP-39 length: 12, 15, 18, 21 or 24. Defaults to 12.
     pub word_count: u8,
     /// Addresses derived per derivation path, per seed.
     pub addresses_per_path: u32,
@@ -50,7 +52,12 @@ pub struct Run {
 impl Default for Run {
     fn default() -> Self {
         Run {
-            word_count: 24,
+            // Zwölf, nicht 24. Das ist die Länge, die fast jede Wallet
+            // ausgibt, also die, an die ein Leser sich erinnert — und der
+            // Suchraum daneben (2^128) sagt dieselbe Aussichtslosigkeit wie
+            // 2^256, nur in einer Zahl, die man noch anschauen kann.
+            // Umschaltbar bleibt es im laufenden Betrieb.
+            word_count: 12,
             addresses_per_path: 20,
             // Not a number: a fixed four was measured on an eight-core M1,
             // where it is exactly right, and is the entire machine on a dual
@@ -64,7 +71,7 @@ impl Default for Run {
 
 impl Run {
     pub fn word_count_enum(&self) -> WordCount {
-        WordCount::from_words(self.word_count).unwrap_or(WordCount::W24)
+        WordCount::from_words(self.word_count).unwrap_or(WordCount::W12)
     }
 
     /// Physical cores, falling back to logical if the count is unavailable.
@@ -111,6 +118,46 @@ impl Default for Lookup {
     }
 }
 
+/// How the window looks. Colours and texture only — never the layout.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Design {
+    /// `night`, `walnut` or `mahogany`. See [`crate::ui::theme::Theme`].
+    pub theme: String,
+    /// Whether the wood grain is painted behind the surfaces.
+    pub grain: bool,
+}
+
+impl Default for Design {
+    fn default() -> Self {
+        Design {
+            theme: "walnut".to_string(),
+            grain: true,
+        }
+    }
+}
+
+/// Where the recovery screen asks what a recovered wallet holds.
+///
+/// Only ever used when somebody presses the button for it. The default is a
+/// public service, which means it learns the addresses it is asked about — hence
+/// the setting: whoever runs their own node should point this at it, and then
+/// nobody else sees anything.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Balance {
+    /// Base URL of an Esplora API, without a trailing slash.
+    pub api: String,
+}
+
+impl Default for Balance {
+    fn default() -> Self {
+        Balance {
+            api: "https://mempool.space/api".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Hits {
@@ -122,8 +169,13 @@ pub struct Hits {
 impl Default for Hits {
     fn default() -> Self {
         Hits {
-            path: PathBuf::from("hits.jsonl"),
-            backup_path: Some(PathBuf::from("hits_backup.jsonl")),
+            // `.txt` und nicht mehr `.jsonl`: die Datei ist eine lesbare
+            // Notiz an den Finder geworden (siehe `hits.rs`), und ihr Name
+            // soll das versprechen, bevor jemand sie anklickt. Eine
+            // bestehende `config.toml` behält ihren alten Pfad — das Format
+            // hängt nicht am Namen, und `read_hits` liest beides.
+            path: PathBuf::from("hits.txt"),
+            backup_path: Some(PathBuf::from("hits_backup.txt")),
         }
     }
 }
@@ -297,6 +349,24 @@ impl Config {
 # measurable battery cost, nothing visible in the energy tab. The search then
 # runs at a hundredth of its speed, which against the numbers this program
 # exists to display is not a meaningful difference.
+#
+# design.theme is how the window looks — the layout never changes, only the
+# colours and the wood grain. `walnut` is dark walnut with a cool verdigris
+# accent, `mahogany` is reddish wood with brass throughout, and `night` is the
+# dark blue-grey the program started with. An unknown name falls back to
+# `walnut` rather than refusing to start.
+#
+# design.grain paints a wood grain behind the surfaces. Set it to false for flat
+# surfaces in the same colour — the grain is deliberately faint, but it sits
+# behind the big monospace numbers, and whether that reads well is a matter of
+# eyes rather than of measurement.
+#
+# balance.api is asked what a recovered wallet holds — and ONLY when you press
+# the button for it on the recovery screen. Nothing is sent automatically, and
+# your words are never sent at all; only derived addresses are. Whoever runs
+# that service therefore learns which addresses you looked up. If you have your
+# own node, point this at it and nobody else sees anything. Any Esplora-
+# compatible API works.
 
 ";
         write_owner_only(path, &format!("{header}{text}"))
@@ -472,10 +542,54 @@ mod tests {
     fn defaults_roundtrip_through_toml() {
         let text = toml::to_string_pretty(&Config::default()).unwrap();
         let parsed: Config = toml::from_str(&text).unwrap();
-        assert_eq!(parsed.run.word_count, 24);
+        assert_eq!(parsed.run.word_count, 12);
         assert_eq!(parsed.run.addresses_per_path, 20);
         assert_eq!(parsed.alerts.max_attempts, 5);
         assert_eq!(parsed.alerts.retry_interval_secs, 60);
+        assert_eq!(parsed.balance.api, "https://mempool.space/api");
+        assert_eq!(parsed.design.theme, "walnut");
+        assert!(parsed.design.grain);
+    }
+
+    /// Eine `config.toml`, die vor `[design]` geschrieben wurde, muss
+    /// weiterlaufen — die des Nutzers ist älter als die Einstellung.
+    #[test]
+    fn a_config_without_a_design_section_still_loads() {
+        let c: Config = toml::from_str("[run]\nword_count = 24\n").expect("muss laden");
+        assert_eq!(c.run.word_count, 24, "der Rest wird trotzdem gelesen");
+        assert_eq!(c.design.theme, "walnut");
+        assert!(c.design.grain);
+
+        // Und ein Tippfehler in der Farbwelt darf das Programm nicht anhalten:
+        // die Einstellung wird als Zeichenkette geführt und erst beim Setzen
+        // gedeutet, damit `validate` sie nicht abweisen kann.
+        let c: Config =
+            toml::from_str("[design]\ntheme = \"kirschholz\"\n").expect("muss trotzdem laden");
+        c.validate()
+            .expect("eine unbekannte Farbwelt ist kein Fehler");
+        assert_eq!(
+            crate::ui::theme::Theme::from_name(&c.design.theme),
+            crate::ui::theme::Theme::Walnut
+        );
+    }
+
+    /// A `config.toml` written before `[balance]` existed must keep working —
+    /// the user's own file is older than the setting.
+    #[test]
+    fn a_config_without_a_balance_section_still_loads() {
+        let text = "\
+[run]
+word_count = 24
+
+[lookup]
+database = \"funded.scdb\"
+";
+        let c: Config = toml::from_str(text).expect("muss ohne [balance] laden");
+        assert_eq!(c.run.word_count, 24, "der Rest wird trotzdem gelesen");
+        assert_eq!(
+            c.balance.api, "https://mempool.space/api",
+            "und der fehlende Abschnitt fällt auf die Voreinstellung zurück"
+        );
     }
 
     /// The template holds an SMTP password and a bot token once filled in, so

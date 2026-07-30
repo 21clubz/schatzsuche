@@ -1101,7 +1101,7 @@ fn draw_seed(f: &mut Frame, area: Rect, app: &App) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        " Gespeichert in hits.jsonl, nur für dich lesbar.",
+        " Gespeichert in deiner Fundliste, nur für dich lesbar.",
         Style::default().fg(C_DIM).add_modifier(Modifier::ITALIC),
     )));
     lines.push(Line::from(Span::styled(

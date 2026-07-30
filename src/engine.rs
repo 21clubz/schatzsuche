@@ -140,8 +140,16 @@ fn worker(shared: &Shared, index: usize) {
 
             // Stage 2: confirm against the sorted file. Reached roughly once
             // per 1/fpr addresses, so its cost is irrelevant to throughput.
+            //
+            // An empty wallet is not a hit. Address dumps carry plenty of
+            // addresses that were funded once and swept long ago; waking
+            // somebody at four in the morning for a balance of zero is a false
+            // alarm, and one recorded in hits.jsonl is worse — it makes the
+            // file a place where real finds hide among noise.
             if let Some(balance) = db.lookup(origin.kind(), hash) {
-                found.push((*hash, origin, balance));
+                if balance > 0 {
+                    found.push((*hash, origin, balance));
+                }
             }
         });
 
@@ -218,7 +226,7 @@ fn worker(shared: &Shared, index: usize) {
 /// rearranged: persist and fsync first, surface locally second, alert last.
 /// Persisting happens on the worker thread rather than being handed to a queue
 /// precisely so that no hit can be sitting in a channel when the process dies.
-fn report(
+pub(crate) fn report(
     shared: &Shared,
     deriver: &Deriver,
     entropy: &[u8],
@@ -270,6 +278,11 @@ fn report(
                 hit: Box::new(hit.clone()),
                 error: e.to_string(),
             });
+            // Auch hier läuten, und zwar vor dem Aussteigen. Vorher sprang die
+            // Funktion an dieser Stelle heraus, bevor die Glocke kam — der
+            // schlimmste Fall war damit der leiseste, was dem Kommentar drei
+            // Zeilen weiter oben direkt widerspricht.
+            bell();
             shared
                 .dispatcher
                 .dispatch_async(AlertPayload::from_hit(&hit));
@@ -281,15 +294,34 @@ fn report(
     let _ = shared.events.send(Event::Hit(Box::new(hit.clone())));
 
     // 5. Terminal bell, independent of whether a TUI is attached.
-    let mut out = std::io::stdout();
-    let _ = out.write_all(b"\x07");
-    let _ = out.flush();
+    bell();
 
     // 6. Only now the network. Asynchronous, so the worker returns to the loop
     // immediately — step 7, "the program keeps running".
     shared
         .dispatcher
         .dispatch_async(AlertPayload::from_hit(&hit));
+}
+
+/// Die Terminal-Glocke — aber nur, wenn jemand sie hören kann.
+///
+/// Vorher schrieb das hier bedingungslos `\x07` auf stdout. Aus dem Finder
+/// gestartet hängt an stdout kein Terminal: das Byte ging ins Leere und sah im
+/// Quelltext trotzdem aus wie eine Benachrichtigung. Wer die App als Bundle
+/// laufen ließ, hatte damit ein akustisches Signal, das es gar nicht gab.
+///
+/// Im Fenster übernimmt [`crate::ui::feel::alarm`] diese Aufgabe.
+///
+/// Bei einer Umleitung in eine Datei oder Pipe ist `is_terminal()` ebenfalls
+/// falsch, und das ist richtig so — in eine Logdatei gehört kein Steuerzeichen.
+fn bell() {
+    use std::io::IsTerminal;
+    let mut out = std::io::stdout();
+    if !out.is_terminal() {
+        return;
+    }
+    let _ = out.write_all(b"\x07");
+    let _ = out.flush();
 }
 
 #[cfg(test)]

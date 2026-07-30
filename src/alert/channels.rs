@@ -176,6 +176,55 @@ impl Notifier for Smtp {
     }
 }
 
+/// Whether this kind of alert should make a noise.
+///
+/// A free function rather than an inline `matches!` so the rule can be pinned
+/// down by a test on every platform, including the ones that never build the
+/// notifier body.
+fn wants_sound(kind: AlertKind) -> bool {
+    match kind {
+        AlertKind::Hit | AlertKind::Test => true,
+        AlertKind::Heartbeat => false,
+    }
+}
+
+/// Tells macOS who is sending, once per process.
+///
+/// Without this the first notification opens a **file chooser** titled "Choose
+/// Application — Where is use_default?" and the program appears to hang on a
+/// system dialog. The cause is two layers down: `mac-notification-sys` resolves
+/// the sending application by running the AppleScript
+/// `get id of application "use_default"` — a placeholder string its authors
+/// never replaced. No such application exists, so the Apple Event Manager asks
+/// the *user* to point at it, and the error is then discarded, which means there
+/// is no silent escape from the dialog.
+///
+/// Once that dialog is dismissed the lookup falls back to `com.apple.Finder`, so
+/// every alert this program has ever sent — a real hit included — arrived wearing
+/// Finder's name and icon, governed by Finder's notification permission. A bundle
+/// identifier of our own fixes both halves.
+///
+/// The call is deliberately here and not in `main`: `set_application` swizzles
+/// `NSBundle.bundleIdentifier` process-wide, and a run that never sends a
+/// notification should not pay for that. The result is deliberately discarded —
+/// `Once` counts as completed either way, and that alone is what keeps
+/// `use_default` from ever being looked up.
+#[cfg(target_os = "macos")]
+fn ensure_app_identity() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let id = if crate::util::in_app_bundle() {
+            // Matches CFBundleIdentifier in scripts/make-macos-app.sh.
+            "io.github.21clubz.schatzsuche"
+        } else {
+            // An unbundled binary has no identifier LaunchServices can resolve,
+            // and a bare `cargo run` really is being watched from a terminal.
+            "com.apple.Terminal"
+        };
+        let _ = notify_rust::set_application(id);
+    });
+}
+
 /// Local desktop notification. Cannot be lost to a network outage, which makes
 /// it a useful floor even when everything else is configured.
 pub struct Desktop;
@@ -186,12 +235,32 @@ impl Notifier for Desktop {
     }
 
     fn send(&self, p: &AlertPayload) -> Result<(), String> {
-        notify_rust::Notification::new()
-            .summary(&p.title())
-            .body(&p.body())
-            .show()
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+        #[cfg(target_os = "macos")]
+        ensure_app_identity();
+
+        let mut n = notify_rust::Notification::new();
+        n.summary(&p.title()).body(&p.body());
+
+        // Ein Ton beim echten Fund — und beim Selbsttest `--test-alert`, denn
+        // dessen ganzer Zweck ist zu hören, wie ein Fund klingt; ein stummer
+        // Selbsttest beantwortet die Frage nicht, die ihn auslöst. Nur das
+        // Lebenszeichen bleibt stumm: das kommt täglich von allein, und daran
+        // gewöhnt man sich das Geräusch ab.
+        //
+        // Das ist der wichtigste Weg von allen: er läuft auf einem eigenen
+        // Thread aus `engine::report` und hängt damit nicht daran, dass die
+        // Zeichenschleife gerade drankommt — er funktioniert auch bei
+        // minimiertem Fenster.
+        //
+        // `.urgency(...)` gibt es hier bewusst nicht: auf macOS hängt die
+        // Methode an einem Feature, das notify-rust auf ein anderes
+        // Benachrichtigungs-Backend umstellt, mit Signatur- und
+        // Berechtigungsfolgen. Der Ton genügt.
+        if wants_sound(p.kind) {
+            n.sound_name("Glass");
+        }
+
+        n.show().map(|_| ()).map_err(|e| e.to_string())
     }
 }
 
@@ -214,6 +283,15 @@ mod tests {
         for s in [&telegram, &webhook, &p.body(), &p.title()] {
             assert!(!s.contains("sentinel mnemonic"), "seed leaked: {s}");
         }
+    }
+
+    /// Der Selbsttest muss klingen — genau das will man von ihm wissen. Nur
+    /// das täglich von allein kommende Lebenszeichen bleibt stumm.
+    #[test]
+    fn only_the_heartbeat_stays_silent() {
+        assert!(wants_sound(AlertKind::Hit));
+        assert!(wants_sound(AlertKind::Test), "ein stummer Selbsttest");
+        assert!(!wants_sound(AlertKind::Heartbeat));
     }
 
     #[test]

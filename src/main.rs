@@ -206,21 +206,14 @@ fn enter_data_dir(explicit: Option<&Path>) -> Result<PathBuf, String> {
 /// True when this process was started as a macOS application bundle.
 ///
 /// A desktop launch carries no arguments, so something has to distinguish it
-/// from a shell invocation. An earlier version asked whether stdout was a
-/// terminal, which is wrong twice over: `schatzsuche > log.txt` from a shell
-/// also has a non-terminal stdout, and on a CI runner *nothing* is a terminal —
-/// so a failing check would have tried to open a window on a machine with no
-/// display.
+/// from a shell invocation. Elsewhere a double-clicked binary gets a console and
+/// the terminal interface, which is the platform convention; `--gui` is always
+/// available.
 ///
-/// The bundle path is an exact signal instead of a guess. Elsewhere a
-/// double-clicked binary gets a console and the terminal interface, which is
-/// the platform convention; `--gui` is always available.
+/// The test itself lives in [`util::in_app_bundle`] because the desktop notifier
+/// needs the same answer for a different reason — see there.
 fn launched_from_app_bundle() -> bool {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .map(|d| d.ends_with("Contents/MacOS"))
-        .unwrap_or(false)
+    util::in_app_bundle()
 }
 
 /// Whether a graphical session exists to draw into.
@@ -755,27 +748,9 @@ fn synth_db(count: usize, output: &PathBuf, plant: Option<&str>) -> Result<(), S
     println!("generating {count} synthetic records ...");
     let t = Instant::now();
 
-    let mut records: Vec<Record> = Vec::with_capacity(count + 64);
-    // Generated in blocks; a syscall per record would dominate the runtime.
-    let mut block = vec![0u8; 1 << 20];
-    let mut made = 0usize;
-    while made < count {
-        getrandom::getrandom(&mut block).map_err(|e| e.to_string())?;
-        for chunk in block.chunks_exact(20) {
-            if made >= count {
-                break;
-            }
-            let mut h = [0u8; 20];
-            h.copy_from_slice(chunk);
-            let kind = match chunk[0] % 3 {
-                0 => Kind::P2pkh,
-                1 => Kind::P2sh,
-                _ => Kind::P2wpkh,
-            };
-            records.push(Record::new(kind, &h, 100_000 + made as u64));
-            made += 1;
-        }
-    }
+    // The generation itself lives in the library: the window offers to build
+    // one of these too, and both routes must produce the same file.
+    let mut records: Vec<Record> = lookup::synthetic_records(count)?;
 
     if let Some(m) = plant {
         let entropy = bip39::Mnemonic::parse(m)
@@ -847,16 +822,42 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
     let pool_threads = schatzsuche::config::physical_cores().max(threads);
     let gui = cli.gui || cli.screenshot.is_some();
 
+    // Die Farbwelt, bevor irgendetwas gezeichnet wird — auch `clear_color` liest
+    // sie schon, bevor das erste Bild kommt.
+    //
+    // `SC_DESIGN` gehört in die SC_SHOT_*-Familie und überschreibt die
+    // Einstellung für einen Lauf: sonst wäre für jedes Vergleichsbild die
+    // config.toml anzufassen.
+    let theme_name = std::env::var("SC_DESIGN").unwrap_or_else(|_| cfg.design.theme.clone());
+    schatzsuche::ui::theme::set_theme(schatzsuche::ui::theme::Theme::from_name(&theme_name));
+    schatzsuche::ui::theme::set_grain(cfg.design.grain);
+
+    // A windowed launch opens on a fork — Schatzsuche or Seed retten — so the
+    // collider is held paused until the reader picks it, and the machine stays
+    // quiet while they decide. A screenshot run skips the fork and wants the
+    // numbers moving, so it is left running.
+    if gui && cli.screenshot.is_none() {
+        control.set_paused(true);
+    }
+
     // In window mode the loading runs behind the already-visible window; in a
     // terminal it runs inline, because the printed lines serve the same purpose.
     let progress = Arc::new(Progress::new());
+    // Where the loader leaves the funded set, so the recovery screen can hunt
+    // through it when no target address was given.
+    let hunt: schatzsuche::gui::HuntSlot = Arc::new(std::sync::Mutex::new(None));
+    // Callable more than once, not `FnOnce`: when there is no database the
+    // window offers to build one and then runs this again. Everything it needs
+    // is therefore cloned inside the body rather than consumed by it.
     let boot = {
         let cfg = cfg.clone();
         let progress = Arc::clone(&progress);
         let stats = Arc::clone(&stats);
         let control = Arc::clone(&control);
         let tx = tx.clone();
+        let hunt = Arc::clone(&hunt);
         move || -> Result<(), String> {
+            let (stats, control, tx) = (Arc::clone(&stats), Arc::clone(&control), tx.clone());
             let loaded = match startup::load(&cfg, &progress) {
                 Ok(l) => l,
                 Err(e) => {
@@ -893,6 +894,12 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
                 events: tx,
                 word_count: wc,
             });
+            // Shared with the window before the engine takes it: the recovery
+            // screen tests its candidates against this very set, and records a
+            // funded seed through this very writer.
+            if let Ok(mut slot) = hunt.lock() {
+                *slot = Some(Arc::clone(&shared));
+            }
             thread::spawn(move || engine::run(shared, pool_threads));
             progress.finish();
             Ok(())
@@ -903,7 +910,14 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
         // The window must exist before loading starts, or a large database
         // means a long stretch with nothing on screen at all.
         let existing = make_writer(&cfg).load_all().unwrap_or_default();
-        thread::spawn(boot);
+        // Shared with the window so its error screen can try again after
+        // building a database, rather than being a dead end with a Close
+        // button on a machine whose owner has never opened a terminal.
+        let boot: schatzsuche::gui::BootFn = Arc::new(boot);
+        {
+            let boot = Arc::clone(&boot);
+            thread::spawn(move || boot());
+        }
 
         let app = schatzsuche::gui::GuiApp::new(
             Arc::clone(&stats),
@@ -917,9 +931,31 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
             0,
             cli.screenshot.clone(),
             Some(Arc::clone(&progress)),
+            Some(boot),
+            Arc::clone(&hunt),
+            // Wo die Dateien liegen. Das Fenster sagt es dem Leser jetzt im
+            // Klartext, statt ihn einen versteckten Ordner suchen zu lassen.
+            schatzsuche::gui::Paths {
+                hits: startup::absolute(&cfg.hits.path),
+                backup: cfg.hits.backup_path.as_deref().map(startup::absolute),
+                database: startup::absolute(&cfg.lookup.database),
+                config: startup::absolute(&cli.config),
+                balance_api: cfg.balance.api.clone(),
+            },
         );
+        // Screenshot hook, in the same family as the SC_SHOT_* switches the
+        // window reads: `SC_SHOT_SIZE=900x640` opens at that size instead of
+        // the default, so the tight layouts can be photographed without a
+        // human dragging a window corner.
+        let size = std::env::var("SC_SHOT_SIZE")
+            .ok()
+            .and_then(|s| {
+                let (w, h) = s.split_once('x')?;
+                Some([w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?])
+            })
+            .unwrap_or([1180.0, 800.0]);
         let mut viewport = eframe::egui::ViewportBuilder::default()
-            .with_inner_size([1180.0, 800.0])
+            .with_inner_size(size)
             .with_min_inner_size([900.0, 640.0])
             .with_title("Schatzsuche");
         if let Some(icon) = schatzsuche::icon_data::icon() {
@@ -933,8 +969,19 @@ fn run_collider(cli: &Cli, cfg: Config) -> Result<(), String> {
             viewport,
             ..Default::default()
         };
-        eframe::run_native("Schatzsuche", opts, Box::new(|_| Ok(Box::new(app))))
-            .map_err(|e| format!("window error: {e}"))?;
+        // Die Schrift der Wortmarke wird hier angemeldet und nicht im
+        // Zeichencode: `set_fonts` baut den Zeichenatlas neu auf, und der
+        // Zeichencode läuft sechzig Mal in der Sekunde. Hier ist die eine
+        // Stelle, an der der Kontext zum ersten Mal vorliegt.
+        eframe::run_native(
+            "Schatzsuche",
+            opts,
+            Box::new(|cc| {
+                schatzsuche::ui::theme::install_fonts(&cc.egui_ctx);
+                Ok(Box::new(app))
+            }),
+        )
+        .map_err(|e| format!("window error: {e}"))?;
     } else {
         println!("Schatzsuche");
         boot()?;

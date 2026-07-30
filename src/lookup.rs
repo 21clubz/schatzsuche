@@ -339,6 +339,41 @@ impl Record {
     }
 }
 
+/// Builds `count` records from OS entropy, for a practice database.
+///
+/// These addresses belong to nobody: they are random hashes, not a dump of the
+/// chain. A search against them is the real search at the real speed, and it
+/// finds exactly as much as a search against the real set would — nothing.
+/// What they buy is a program that runs at all before anyone has downloaded a
+/// 40 GB dump.
+///
+/// Lives here rather than in the binary because the window offers to build one
+/// too, on a machine whose owner has never opened a terminal.
+pub fn synthetic_records(count: usize) -> Result<Vec<Record>, String> {
+    let mut records: Vec<Record> = Vec::with_capacity(count + 64);
+    // Drawn in blocks; a syscall per record would dominate the runtime.
+    let mut block = vec![0u8; 1 << 20];
+    let mut made = 0usize;
+    while made < count {
+        getrandom::getrandom(&mut block).map_err(|e| e.to_string())?;
+        for chunk in block.chunks_exact(20) {
+            if made >= count {
+                break;
+            }
+            let mut h = [0u8; 20];
+            h.copy_from_slice(chunk);
+            let kind = match chunk[0] % 3 {
+                0 => Kind::P2pkh,
+                1 => Kind::P2sh,
+                _ => Kind::P2wpkh,
+            };
+            records.push(Record::new(kind, &h, 100_000 + made as u64));
+            made += 1;
+        }
+    }
+    Ok(records)
+}
+
 /// Sorts, de-duplicates and writes records to a database file.
 pub fn write_database(path: &Path, mut records: Vec<Record>) -> io::Result<usize> {
     // Ordering is by the 21-byte key; the balance tail rides along. Sorting the

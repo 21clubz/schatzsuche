@@ -2,11 +2,28 @@
 **/*.rs.bk
 
 # Runtime data — never commit a hits file, it would contain seeds.
+#
+# Beide Endungen, und das ist kein Gürtel-und-Hosenträger: die Trefferdatei
+# heißt seit `hits.rs` `hits.txt` und nicht mehr `hits.jsonl`, weil sie eine
+# lesbare Notiz an den Finder geworden ist. Die Regel hier stand noch auf dem
+# alten Namen — sie hätte also genau die Datei durchgelassen, für die sie da
+# ist. Alte Namen bleiben stehen, weil `read_hits` beide Formate liest und auf
+# bestehenden Rechnern noch beide liegen.
 /hits.jsonl
 /hits_backup.jsonl
 /pending_alerts.jsonl
 *.jsonl
 *.jsonl.*
+hits*.txt
+hits*.txt.*
+
+# Das Datenverzeichnis aus dem Selbsttest in der README und in der CI. Es
+# enthält eine Trefferdatei.
+/ci-data/
+
+# Gebaute App-Bundles. `make-macos-app.sh` legt sie hier ab; ein 10-MB-Binary
+# gehört nicht in ein Quell-Repo.
+/dist/
 
 # The address database is hundreds of megabytes and is generated, not authored.
 *.scdb
@@ -15,3 +32,6 @@
 /config.toml
 
 .DS_Store
+
+# Bytecode from the image scripts sharing `scripts/cutout.py`.
+__pycache__/

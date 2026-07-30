@@ -27,6 +27,26 @@ pub fn hostname() -> String {
     std::env::var("COMPUTERNAME").unwrap_or_else(|_| "unknown".to_string())
 }
 
+/// True when this process runs from inside a macOS application bundle.
+///
+/// Two very different questions depend on this. `main` uses it to tell a
+/// double-click from a shell invocation, because a desktop launch carries no
+/// arguments to distinguish it. The desktop notifier uses it to decide which
+/// bundle identifier to claim: only a bundled build has one that LaunchServices
+/// can resolve.
+///
+/// The path is an exact signal rather than a guess. An earlier version of the
+/// `main` check asked whether stdout was a terminal, which is wrong twice over:
+/// `schatzsuche > log.txt` from a shell also has a non-terminal stdout, and on
+/// a CI runner *nothing* is a terminal.
+pub fn in_app_bundle() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .map(|d| d.ends_with("Contents/MacOS"))
+        .unwrap_or(false)
+}
+
 /// Seconds since the Unix epoch.
 pub fn unix_now() -> u64 {
     SystemTime::now()
@@ -51,6 +71,27 @@ pub fn rfc3339(unix: u64) -> String {
         secs_of_day / 3600,
         (secs_of_day % 3600) / 60,
         secs_of_day % 60
+    )
+}
+
+/// Formats a Unix timestamp the way a person writes a date: `30.07.2026,
+/// 05:54 Uhr (UTC)`.
+///
+/// UTC und ausdrücklich so beschriftet. Die Ortszeit wäre freundlicher, aber
+/// sie hängt an einer Zeitzonendatenbank, und die kostet eine Abhängigkeit im
+/// Baum eines Programms, das Wallet-Schlüssel erzeugt. Eine Zeitangabe, die
+/// dazuschreibt, welche Uhr sie meint, ist ehrlicher als eine, die es
+/// verschweigt.
+pub fn human_utc(unix: u64) -> String {
+    let (y, m, d) = civil_from_days((unix / 86_400) as i64);
+    let secs_of_day = unix % 86_400;
+    format!(
+        "{:02}.{:02}.{:04}, {:02}:{:02} Uhr (UTC)",
+        d,
+        m,
+        y,
+        secs_of_day / 3600,
+        (secs_of_day % 3600) / 60
     )
 }
 
@@ -127,6 +168,14 @@ mod tests {
         // A leap day, which is where naive date maths usually breaks.
         assert_eq!(rfc3339(1_709_164_800), "2024-02-29T00:00:00Z");
         assert_eq!(rfc3339(1_735_689_599), "2024-12-31T23:59:59Z");
+    }
+
+    /// Dieselben Zeitpunkte wie oben, in der Schreibweise der Fundliste.
+    #[test]
+    fn human_dates_read_like_dates() {
+        assert_eq!(human_utc(0), "01.01.1970, 00:00 Uhr (UTC)");
+        assert_eq!(human_utc(1_000_000_000), "09.09.2001, 01:46 Uhr (UTC)");
+        assert_eq!(human_utc(1_709_164_800), "29.02.2024, 00:00 Uhr (UTC)");
     }
 
     #[test]

@@ -150,6 +150,36 @@ pub fn word_index(word: &str) -> Option<u16> {
     None
 }
 
+/// The word [`word_index`] would actually use for this input.
+///
+/// The recovery screen shows this back to the reader. The lookup above is
+/// deliberately forgiving — it accepts a four-letter stub, and therefore also
+/// accepts "abandonn" and silently reads it as "abandon". Forgiving is right;
+/// silent is not, when the thing being read is somebody's seed. Handing the
+/// resolved word back is what lets the screen say which word it understood.
+pub fn resolve_word(input: &str) -> Option<&'static str> {
+    word_index(input).map(|i| wordlist()[i as usize])
+}
+
+/// Words beginning with `prefix`, at most `max` of them, for the suggestions
+/// the recovery screen offers while a word is being typed.
+///
+/// An empty prefix returns nothing rather than the first `max` words: a blank
+/// field means "I do not know this one", and answering it with "abandon,
+/// ability, able" would be noise at best and a nudge at worst.
+pub fn words_starting_with(prefix: &str, max: usize) -> Vec<&'static str> {
+    let prefix = prefix.trim().to_ascii_lowercase();
+    if prefix.is_empty() {
+        return Vec::new();
+    }
+    wordlist()
+        .iter()
+        .filter(|w| w.starts_with(&prefix))
+        .take(max)
+        .copied()
+        .collect()
+}
+
 /// Turns word indices back into entropy, but only if the BIP-39 checksum
 /// holds. `None` means this exact sequence of words is not a valid mnemonic.
 ///
@@ -287,6 +317,66 @@ mod tests {
 
     fn hex(b: &[u8]) -> String {
         b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
+    /// What the recovery screen shows back to the reader, including the cases
+    /// where the forgiving lookup reads something other than what was typed.
+    #[test]
+    fn a_typed_word_reports_what_it_was_understood_as() {
+        assert_eq!(resolve_word("abandon"), Some("abandon"));
+        assert_eq!(resolve_word("  ABANDON  "), Some("abandon"));
+        // A four-letter stub, which is the case the lookup exists for.
+        assert_eq!(resolve_word("aban"), Some("abandon"));
+        // And the case that used to pass silently: a typo one letter too long.
+        assert_eq!(
+            resolve_word("abandonn"),
+            Some("abandon"),
+            "still resolved — but now the screen can say so"
+        );
+        assert_eq!(resolve_word("zzzz"), None);
+        assert_eq!(resolve_word(""), None);
+        assert_eq!(resolve_word("ab"), None, "too short to be a stub");
+    }
+
+    #[test]
+    fn suggestions_narrow_as_the_word_is_typed() {
+        let a = words_starting_with("aba", 10);
+        assert!(a.contains(&"abandon"), "got {a:?}");
+        assert!(a.iter().all(|w| w.starts_with("aba")));
+
+        // Narrowing to one.
+        assert_eq!(words_starting_with("abando", 10), vec!["abandon"]);
+
+        // Case and spacing are the reader's business, not the list's.
+        assert_eq!(words_starting_with("  ABAN ", 10), vec!["abandon"]);
+
+        // A blank field is a question, not a prefix.
+        assert!(words_starting_with("", 10).is_empty());
+        assert!(words_starting_with("   ", 10).is_empty());
+
+        // Nothing matches nothing.
+        assert!(words_starting_with("qqqq", 10).is_empty());
+
+        // The cap holds.
+        assert_eq!(words_starting_with("a", 3).len(), 3);
+
+        // Every BIP-39 word can be reached by typing it out, and offers itself
+        // first. Not *only* itself: the list contains words that are prefixes
+        // of longer ones — "act" of "action", "add" of "address" — so someone
+        // who has typed "act" may still be on their way to "action" and must
+        // keep seeing it.
+        for w in wordlist() {
+            let found = words_starting_with(w, 8);
+            assert_eq!(
+                found.first(),
+                Some(w),
+                "a whole word must offer itself first: {w} gave {found:?}"
+            );
+        }
+        assert_eq!(
+            words_starting_with("act", 8),
+            vec!["act", "action", "actor", "actress", "actual"]
+        );
     }
 
     /// Trezor's canonical BIP-39 vector: all-zero entropy, passphrase "TREZOR".

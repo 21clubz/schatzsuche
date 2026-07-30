@@ -9,8 +9,17 @@
 //! the drive has committed it — the disk's own write cache is still volatile.
 //! `F_FULLFSYNC` is the only call that forces a platter/flash commit, so that
 //! is what [`append_durable`] issues. The containing directory is synced too,
-//! otherwise a newly created `hits.jsonl` can lose its directory entry and the
+//! otherwise a newly created `hits.txt` can lose its directory entry and the
 //! file becomes unreachable despite its contents being safe.
+//!
+//! **Die Datei ist eine Textdatei und keine Datenbank.** Sie hieß einmal
+//! `hits.jsonl` und trug je Fund eine Zeile JSON. Das war für das Programm
+//! bequem, das sie zurückliest, und für den Menschen davor eine Zumutung: wer
+//! sie öffnete — und er öffnet sie genau einmal, nämlich an dem Tag, an dem
+//! etwas gefunden wurde —, fand seine zwölf Wörter irgendwo zwischen
+//! Anführungszeichen und geschweiften Klammern. Jetzt steht dort ein Absatz mit
+//! beschrifteten Zeilen, den man liest, ohne etwas zu wissen. Zurücklesen kann
+//! das Programm ihn trotzdem, siehe [`read_hits`].
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
@@ -91,6 +100,170 @@ impl Hit {
     }
 }
 
+// --- Das Dateiformat --------------------------------------------------------
+
+/// Womit ein Fundsatz beginnt. Der Parser erkennt daran den Anfang eines
+/// Satzes; alles davor — die Kopfzeilen der Datei — wird überlesen.
+const RECORD_HEAD: &str = "TREFFER";
+
+/// Wie breit die Beschriftungen stehen, damit die Werte untereinander fluchten.
+const LABEL_W: usize = 22;
+
+/// Was einmal ganz oben in einer neuen Fundliste steht.
+///
+/// Die Datei wird von jemandem geöffnet, der gerade erfahren hat, dass er eine
+/// fremde Wallet in der Hand hält — der schlechteste denkbare Moment, um sich
+/// die Regeln selbst zusammenzureimen. Also stehen sie dort, bevor der erste
+/// Fund kommt.
+const FILE_HEADER: &str = "\
+Schatzsuche — gefundene Wallets
+===============================
+
+Hier steht alles, was zu einem Fund gehört: die Seed-Wörter, der private
+Schlüssel, die Adresse und das Guthaben.
+
+Wer diese Datei hat, hat das Geld. Sie gehört auf diesen Rechner und nirgendwo
+sonst — nicht in eine Cloud, nicht in eine E-Mail, nicht in einen Chat. Das
+Programm verschickt sie nie.
+
+";
+
+/// Ein Fund als lesbarer Absatz.
+fn render(hit: &Hit) -> String {
+    let mut s = String::new();
+    s.push_str(&format!(
+        "{RECORD_HEAD} — {}\n",
+        util::human_utc(hit.timestamp_unix)
+    ));
+    s.push_str("--------------------------------------------------\n");
+    let mut field = |name: &str, value: &str| {
+        s.push_str(&format!("{:<LABEL_W$}{}\n", format!("{name}:"), value));
+    };
+    // Reihenfolge nach Dringlichkeit: zuerst, wie viel es ist, dann die zwei
+    // Angaben, mit denen man drankommt. Der technische Rest steht unten.
+    field("Guthaben", &hit.balance_btc);
+    field("Adresse", &hit.address);
+    field("Seed-Wörter", &hit.mnemonic);
+    field("Privater Schlüssel", &hit.private_key_wif);
+    field("Ableitungspfad", &hit.derivation_path);
+    field("Adressart", &hit.script_type);
+    field("Gefunden auf", &hit.hostname);
+    field("Zeitstempel", &hit.timestamp_unix.to_string());
+    field("Entropie", &hit.entropy_hex);
+    s.push('\n');
+    s
+}
+
+/// Liest eine Fundliste zurück.
+///
+/// Nimmt **beide** Formate: die beschrifteten Absätze von heute und die
+/// JSON-Zeilen von früher, auch gemischt in derselben Datei. Das ist keine
+/// Nachsicht, sondern der Umzugsweg — wessen `config.toml` weiter auf die alte
+/// Datei zeigt, dem darf ein Fund nicht aus dem Fenster verschwinden, nur weil
+/// das Format gewechselt hat.
+///
+/// Kaputte Sätze werden übersprungen statt den Lauf abzubrechen: eine halb
+/// geschriebene Zeile — volle Platte, Stromausfall mitten im Schreiben — darf
+/// nicht die Funde davor unlesbar machen.
+pub fn read_hits(path: &Path) -> io::Result<Vec<Hit>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let f = File::open(path)?;
+    let mut out = Vec::new();
+    let mut fields: Option<Vec<(String, String)>> = None;
+
+    for line in BufReader::new(f).lines() {
+        let line = line?;
+        let trimmed = line.trim();
+
+        if trimmed.starts_with(RECORD_HEAD) {
+            if let Some(done) = fields.replace(Vec::new()) {
+                out.extend(hit_from_fields(&done));
+            }
+            continue;
+        }
+        // Eine Zeile aus der JSONL-Zeit.
+        if trimmed.starts_with('{') {
+            if let Ok(h) = serde_json::from_str::<Hit>(trimmed) {
+                out.push(h);
+            }
+            continue;
+        }
+        let Some(fields) = fields.as_mut() else {
+            continue; // Kopfzeilen, vor dem ersten Fund.
+        };
+        if let Some((k, v)) = trimmed.split_once(':') {
+            let (k, v) = (k.trim(), v.trim());
+            if !k.is_empty() && !v.is_empty() {
+                fields.push((k.to_string(), v.to_string()));
+            }
+        }
+    }
+    if let Some(done) = fields {
+        out.extend(hit_from_fields(&done));
+    }
+    Ok(out)
+}
+
+/// Baut einen Fund aus den gelesenen Zeilen — oder `None`, wenn das
+/// Wesentliche fehlt.
+///
+/// Wesentlich sind Adresse und Wörter. Ohne sie ist der Satz kein Fund,
+/// sondern Text; alles andere wird notfalls hergeleitet oder bleibt leer.
+fn hit_from_fields(fields: &[(String, String)]) -> Option<Hit> {
+    let get = |name: &str| {
+        fields
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+    };
+    let address = get("Adresse")?.to_string();
+    let mnemonic = get("Seed-Wörter")?.to_string();
+    let derivation_path = get("Ableitungspfad").unwrap_or_default().to_string();
+    // Aus dem BTC-Betrag zurückgerechnet statt zusätzlich in Satoshi
+    // hingeschrieben: zwei Zahlen für denselben Betrag in einer Datei, die
+    // jemand von Hand lesen soll, sind eine Frage zu viel.
+    let balance_sats = get("Guthaben").and_then(sats_from_btc).unwrap_or(0);
+    let timestamp_unix = get("Zeitstempel")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+
+    Some(Hit {
+        id: Hit::make_id(&address, &derivation_path),
+        timestamp: util::rfc3339(timestamp_unix),
+        timestamp_unix,
+        hostname: get("Gefunden auf").unwrap_or("unknown").to_string(),
+        derivation_path,
+        script_type: get("Adressart").unwrap_or_default().to_string(),
+        address,
+        balance_sats,
+        balance_btc: util::format_btc(balance_sats),
+        mnemonic,
+        entropy_hex: get("Entropie").unwrap_or_default().to_string(),
+        private_key_wif: get("Privater Schlüssel").unwrap_or_default().to_string(),
+    })
+}
+
+/// `"1.33700000 BTC"` zurück in Satoshi.
+///
+/// Nachkommastellen werden auf acht gebracht, statt eine krumme Angabe
+/// abzulehnen: wer die Datei von Hand bearbeitet und `0.5 BTC` hineinschreibt,
+/// meint eine halbe, nicht fünf Satoshi.
+fn sats_from_btc(s: &str) -> Option<u64> {
+    let num = s.split_whitespace().next()?;
+    let (whole, frac) = num.split_once('.').unwrap_or((num, "0"));
+    let mut frac: String = frac.chars().take(8).collect();
+    while frac.len() < 8 {
+        frac.push('0');
+    }
+    whole
+        .parse::<u64>()
+        .ok()?
+        .checked_mul(100_000_000)?
+        .checked_add(frac.parse::<u64>().ok()?)
+}
+
 pub struct HitWriter {
     primary: PathBuf,
     backup: Option<PathBuf>,
@@ -117,14 +290,12 @@ impl HitWriter {
     /// succeeded — losing the second copy is survivable, losing the first is
     /// not.
     pub fn persist(&self, hit: &Hit) -> io::Result<Option<io::Error>> {
-        let mut line = serde_json::to_string(hit)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        line.push('\n');
+        let block = render(hit);
 
-        append_durable(&self.primary, line.as_bytes())?;
+        append_record(&self.primary, &block)?;
 
         let backup_err = match &self.backup {
-            Some(p) => append_durable(p, line.as_bytes()).err(),
+            Some(p) => append_record(p, &block).err(),
             None => None,
         };
         Ok(backup_err)
@@ -133,8 +304,26 @@ impl HitWriter {
     /// Reads every persisted hit back. Used by `--test-persistence` and to
     /// repopulate the UI on restart.
     pub fn load_all(&self) -> io::Result<Vec<Hit>> {
-        read_jsonl(&self.primary)
+        read_hits(&self.primary)
     }
+}
+
+/// Hängt einen Fundsatz an; in eine noch leere Datei kommen zuerst die
+/// Kopfzeilen.
+///
+/// Kopfzeilen und Satz gehen als **ein** Schreibvorgang hinaus, damit im
+/// Anhänge-Modus nichts dazwischenrutschen kann. Zwei Funde in derselben
+/// Millisekunde könnten die Kopfzeilen theoretisch doppelt sehen — bei einem
+/// Programm, dessen erwarteter Abstand zwischen zwei Funden das Alter des
+/// Universums übersteigt, ist das eine Zeile Kommentar wert und keine Sperre.
+fn append_record(path: &Path, block: &str) -> io::Result<()> {
+    let fresh = fs::metadata(path).map(|m| m.len() == 0).unwrap_or(true);
+    let mut bytes = String::new();
+    if fresh {
+        bytes.push_str(FILE_HEADER);
+    }
+    bytes.push_str(block);
+    append_durable(path, bytes.as_bytes())
 }
 
 /// Appends bytes to `path` and does not return until they are durable.
@@ -255,12 +444,51 @@ pub struct PersistenceReport {
 
 impl PersistenceReport {
     pub fn ok(&self) -> bool {
+        self.problem().is_none()
+    }
+
+    /// Which part is broken, in one sentence — or `None` when everything holds.
+    ///
+    /// [`PersistenceReport::ok`] answers "may I trust the disk?", which is the
+    /// only thing the search itself needs. A window has to answer "what exactly
+    /// went wrong?", and a bare `false` cannot. The order is by severity: losing
+    /// the first copy is not survivable, losing the second one is.
+    pub fn problem(&self) -> Option<String> {
         let mode_ok = |m: Option<u32>| m.map(|m| m == 0o600).unwrap_or(true);
-        self.primary_readback_ok
-            && mode_ok(self.primary_mode)
-            && self.backup_error.is_none()
-            && (self.backup.is_none()
-                || (self.backup_readback_ok && mode_ok(self.backup_mode.flatten())))
+
+        if !self.primary_readback_ok {
+            return Some(format!(
+                "{} konnte nicht zurückgelesen werden",
+                self.primary.display()
+            ));
+        }
+        if !mode_ok(self.primary_mode) {
+            return Some(format!(
+                "Rechte an {} sind {:o}, erwartet 600 — die Datei ist für andere lesbar",
+                self.primary.display(),
+                self.primary_mode.unwrap_or(0)
+            ));
+        }
+        if let Some(e) = &self.backup_error {
+            return Some(format!("Sicherungskopie fehlgeschlagen: {e}"));
+        }
+        let Some(backup) = &self.backup else {
+            return None;
+        };
+        if !self.backup_readback_ok {
+            return Some(format!(
+                "Sicherungskopie {} konnte nicht zurückgelesen werden",
+                backup.display()
+            ));
+        }
+        if !mode_ok(self.backup_mode.flatten()) {
+            return Some(format!(
+                "Rechte an der Sicherungskopie {} sind {:o}, erwartet 600",
+                backup.display(),
+                self.backup_mode.flatten().unwrap_or(0)
+            ));
+        }
+        None
     }
 }
 
@@ -280,7 +508,7 @@ pub fn self_test(writer: &HitWriter) -> io::Result<PersistenceReport> {
         }
     };
     let contains = |p: &Path| -> io::Result<bool> {
-        let hits: Vec<Hit> = read_jsonl(p)?;
+        let hits = read_hits(p)?;
         Ok(hits
             .iter()
             .any(|h| h.id == hit.id && h.mnemonic == hit.mnemonic))
@@ -314,6 +542,55 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// Ein Bericht muss den kaputten Teil benennen können. `false` allein
+    /// reicht dem Fenster nicht: der Nutzer erfährt sonst, dass etwas nicht
+    /// stimmt, aber nicht was.
+    #[test]
+    fn problem_names_the_broken_part() {
+        let healthy = || PersistenceReport {
+            primary: PathBuf::from("/tmp/hits.txt"),
+            primary_mode: Some(0o600),
+            primary_readback_ok: true,
+            backup: Some(PathBuf::from("/tmp/backup.jsonl")),
+            backup_mode: Some(Some(0o600)),
+            backup_readback_ok: true,
+            backup_error: None,
+        };
+
+        assert_eq!(healthy().problem(), None);
+        assert!(healthy().ok());
+
+        let loose = PersistenceReport {
+            primary_mode: Some(0o644),
+            ..healthy()
+        };
+        let msg = loose.problem().expect("lockere Rechte müssen auffallen");
+        assert!(msg.contains("644"), "{msg}");
+        assert!(msg.contains("600"), "{msg}");
+        assert!(!loose.ok());
+
+        let unread = PersistenceReport {
+            primary_readback_ok: false,
+            ..healthy()
+        };
+        assert!(unread.problem().unwrap().contains("hits.txt"));
+
+        let no_backup = PersistenceReport {
+            backup_error: Some("Platte voll".into()),
+            ..healthy()
+        };
+        assert!(no_backup.problem().unwrap().contains("Platte voll"));
+
+        // Ohne konfigurierte Sicherungskopie darf deren Fehlen nichts melden.
+        let single = PersistenceReport {
+            backup: None,
+            backup_mode: None,
+            backup_readback_ok: false,
+            ..healthy()
+        };
+        assert_eq!(single.problem(), None);
     }
 
     #[test]
@@ -395,6 +672,130 @@ mod tests {
         );
 
         fs::remove_dir_all(&d).ok();
+    }
+
+    /// **Der Zweck der ganzen Datei.** Wer sie öffnet, hat gerade eine fremde
+    /// Wallet gefunden und sucht drei Dinge: die Wörter, die Adresse und die
+    /// Auskunft, wie viel darauf liegt. Alle drei müssen ohne Werkzeug lesbar
+    /// dastehen — und die Klammern von früher dürfen weg bleiben.
+    #[test]
+    fn the_file_reads_like_a_note_to_a_human() {
+        let d = tmpdir("readable");
+        let p = d.join("hits.txt");
+        let w = HitWriter::new(p.clone(), None);
+        w.persist(&Hit::synthetic()).unwrap();
+
+        let text = fs::read_to_string(&p).unwrap();
+        assert!(
+            !text.contains('{'),
+            "es steht wieder JSON in der Datei:\n{text}"
+        );
+        for expected in [
+            "Wer diese Datei hat, hat das Geld.", // die Warnung im Kopf
+            "TREFFER",
+            "Guthaben:",
+            "1.33700000 BTC",
+            "Seed-Wörter:",
+            "abandon abandon",
+            "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu",
+        ] {
+            assert!(text.contains(expected), "„{expected}“ fehlt in:\n{text}");
+        }
+
+        fs::remove_dir_all(&d).ok();
+    }
+
+    /// Lesbar allein genügt nicht: das Fenster liest die Datei beim Start
+    /// zurück, und ein Fund, der dabei seine Wörter oder sein Guthaben
+    /// verliert, ist schlimmer als keiner.
+    #[test]
+    fn every_field_survives_the_round_trip() {
+        let d = tmpdir("roundtrip");
+        let w = HitWriter::new(d.join("hits.txt"), None);
+        let mut hit = Hit::synthetic();
+        hit.private_key_wif = "L1aW4aubDFB7yfras2S1mN3bqg9nwySY8nkoLmJebSLD5BWv3ENZ".into();
+        hit.hostname = "meiner".into();
+        w.persist(&hit).unwrap();
+
+        let back = w.load_all().unwrap();
+        assert_eq!(back.len(), 1);
+        let b = &back[0];
+        assert_eq!(b.mnemonic, hit.mnemonic);
+        assert_eq!(b.address, hit.address);
+        assert_eq!(b.private_key_wif, hit.private_key_wif);
+        assert_eq!(b.balance_sats, hit.balance_sats);
+        assert_eq!(b.balance_btc, hit.balance_btc);
+        assert_eq!(b.derivation_path, hit.derivation_path);
+        assert_eq!(b.script_type, hit.script_type);
+        assert_eq!(b.hostname, hit.hostname);
+        assert_eq!(b.timestamp_unix, hit.timestamp_unix);
+        assert_eq!(b.timestamp, hit.timestamp);
+        assert_eq!(b.entropy_hex, hit.entropy_hex);
+        assert_eq!(b.id, hit.id);
+        // Und der Selbsttest-Eintrag muss als solcher erkennbar bleiben, sonst
+        // steht er beim nächsten Start als echter Fund im Fenster.
+        assert!(b.is_synthetic());
+
+        fs::remove_dir_all(&d).ok();
+    }
+
+    /// Die Datei aus der JSONL-Zeit muss weiter lesbar sein — auch gemischt
+    /// mit neuen Sätzen. Sonst verschwindet ein alter Fund bei einem Update
+    /// wortlos aus dem Fenster.
+    #[test]
+    fn hits_written_by_the_old_version_still_load() {
+        let d = tmpdir("legacy");
+        let p = d.join("hits.jsonl");
+        let mut old = Hit::synthetic();
+        old.address = "bc1qalt".into();
+        old.id = Hit::make_id(&old.address, &old.derivation_path);
+        let mut line = serde_json::to_string(&old).unwrap();
+        line.push('\n');
+        fs::write(&p, &line).unwrap();
+
+        let w = HitWriter::new(p.clone(), None);
+        w.persist(&Hit::synthetic()).unwrap();
+
+        let all = w.load_all().unwrap();
+        assert_eq!(all.len(), 2, "beide Formate müssen ankommen");
+        assert!(all.iter().any(|h| h.address == "bc1qalt"));
+        assert!(all
+            .iter()
+            .any(|h| h.address == "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu"));
+
+        fs::remove_dir_all(&d).ok();
+    }
+
+    /// Ein abgeschnittener letzter Satz — volle Platte, Stromausfall — darf
+    /// die Funde davor nicht mitnehmen.
+    #[test]
+    fn a_truncated_record_costs_only_itself() {
+        let d = tmpdir("truncated");
+        let p = d.join("hits.txt");
+        let w = HitWriter::new(p.clone(), None);
+        w.persist(&Hit::synthetic()).unwrap();
+
+        let mut text = fs::read_to_string(&p).unwrap();
+        text.push_str("TREFFER — 30.07.2026, 05:54 Uhr (UTC)\nGuthaben:  1.0");
+        fs::write(&p, text).unwrap();
+
+        let all = w.load_all().unwrap();
+        assert_eq!(all.len(), 1, "der vollständige Fund muss überleben");
+
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn btc_amounts_convert_back_to_satoshi() {
+        assert_eq!(sats_from_btc("1.33700000 BTC"), Some(133_700_000));
+        assert_eq!(sats_from_btc("0.00000001 BTC"), Some(1));
+        assert_eq!(sats_from_btc("21.00000000"), Some(2_100_000_000));
+        // Von Hand gekürzt geschrieben: eine halbe, nicht fünf Satoshi.
+        assert_eq!(sats_from_btc("0.5 BTC"), Some(50_000_000));
+        assert_eq!(sats_from_btc("nichts"), None);
+        assert_eq!(sats_from_btc(""), None);
+        // Unsinn darf überlaufen wollen, aber nicht dürfen.
+        assert_eq!(sats_from_btc("99999999999999999999 BTC"), None);
     }
 
     #[test]
