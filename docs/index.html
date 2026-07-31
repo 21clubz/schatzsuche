@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Schatzsuche — ein Programm, das Bitcoin-Wallets errät</title>
+<title>Schatzsuche — errät Bitcoin-Wallets, rettet halb vergessene Seeds</title>
 <meta name="description" content="Schatzsuche errät Bitcoin-Wallets — 3.343 pro Sekunde auf einem M1 — und beweist damit, dass das nicht funktioniert. Kennst du die meisten Wörter deines Seeds noch, findet es den Rest: gratis, offen, ohne Anteil. Zum Üben mit erfundenen Wörtern.">
 <link rel="canonical" href="https://21clubz.github.io/schatzsuche/">
 <meta name="theme-color" content="#0f0b07">
@@ -138,7 +138,7 @@ p + p { margin-top: .9rem; }
 
 /* ------- 2 · Die Zahl ------- */
 .thenumber {
-  min-height: 92svh; display: flex; flex-direction: column;
+  min-height: min(92svh, 48rem); display: flex; flex-direction: column;
   align-items: center; justify-content: center; text-align: center; gap: 1.2rem;
 }
 .thenumber .lead { color: var(--muted); letter-spacing: .18em; text-transform: uppercase; font-size: .82rem; }
@@ -159,7 +159,7 @@ p + p { margin-top: .9rem; }
 /* ------- Text + Bild nebeneinander ------- */
 .split { display: grid; grid-template-columns: 1fr 1fr; gap: 2.4rem; align-items: center; }
 .split .shot { border-radius: 12px; border: 1px solid var(--frame); box-shadow: 0 18px 50px rgba(0,0,0,.6); }
-@media (max-width: 820px) { .split { grid-template-columns: 1fr; } }
+@media (max-width: 820px) { .split { grid-template-columns: 1fr; } .split .shot { order: 2; } }
 
 /* ------- 5 · Kein Angriffswerkzeug ------- */
 .proofs { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 1.1rem; margin-top: 1.4rem; }
@@ -240,8 +240,8 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
   <img class="chest" src="assets/icon.png" alt="Eine offene Holztruhe mit Karte, Kompass und Goldmünzen — das Zeichen von Schatzsuche" width="512" height="512">
   <div class="wordmark">SCHATZSUCHE</div>
   <h1>Ein Programm, das Bitcoin-Wallets errät — <em>und dabei beweist, dass das nicht funktioniert.</em></h1>
-  <p class="dimtext" style="max-width:46ch">Und wenn du die meisten Wörter deines Seeds noch
-  kennst, findet dieselbe Maschine den Rest.</p>
+  <p style="max-width:46ch; font-size:1.08rem">Aber wenn du die meisten Wörter deines Seeds noch
+  kennst, <em style="font-style:normal; color:var(--gold)">findet dieselbe Maschine den Rest</em>.</p>
 
   <div class="demo panel">
     <div class="demo-grid">
@@ -271,6 +271,8 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
   <div class="lead reveal">Erwartete Wartezeit bis zum ersten Treffer</div>
   <div class="huge reveal">10¹⁹&#8202;×<small>das Alter des Universums</small></div>
   <p class="quote reveal">Kein Fehler — das ist das Ergebnis, und es zeigt, warum Bitcoin sicher ist.</p>
+  <p class="dimtext reveal" style="max-width:40ch">Die einzige Abkürzung ist dein Gedächtnis:
+  Kennst du die meisten Wörter deines Seeds noch, schrumpft das Universum auf eine Liste.</p>
   <p class="fineprint reveal">Gerechnet mit 3&#8201;343 Wallets pro Sekunde — voller Einsatz auf einem M1 —
   gegen eine Datenbank aus 5&#8201;Millionen Adressen.</p>
 </section>
@@ -311,13 +313,13 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
       <p class="dimtext reveal">Es gibt Dienste, die dafür einen Anteil deiner Wallet nehmen.
       In diesem Standardfall machen beide dasselbe:</p>
       <ul class="tiers reveal">
-        <li><span class="name">Bezahlter Dienst</span><span class="desc">lässt ein Werkzeug über die Liste laufen — und behält einen Anteil deiner Wallet</span></li>
+        <li><span class="name">Bezahlter Dienst</span><span class="desc">lässt ein Werkzeug über die Liste laufen — und behält davon einen Teil</span></li>
         <li><span class="name" style="color:var(--gold)">Schatzsuche</span><span class="desc">dieselbe Suche auf deinem Rechner — kostenlos und nachlesbar</span></li>
       </ul>
       <p class="dimtext reveal">Fair bleibt fair: Schwere Fälle — kaputte Geräte, gelöschte
       Datenträger — sind echte Forensik und echte Handarbeit. Um die geht es hier nicht.</p>
-      <p class="fineprint reveal">Üben kannst du vorher mit erfundenen Wörtern — ganz ohne deinen
-      echten Seed.</p>
+      <p class="dimtext reveal">Üben kannst du vorher mit erfundenen Wörtern — ganz ohne deinen
+      echten Seed. <a href="#herunterladen" style="color:var(--gold)">Probier es aus&nbsp;→</a></p>
     </div>
     <img class="shot reveal" src="assets/recover.png" alt="Die Seed-Rettung in Schatzsuche: nummerierte Felder für die Wörter, erkannte Wörter grün markiert" width="1180" height="760" loading="lazy">
   </div>
@@ -364,7 +366,7 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
       <div class="cap reveal">Dein Rechner</div>
       <h2 class="reveal">Es stellt sich selbst ein</h2>
       <p class="reveal">Beim Start sieht sich Schatzsuche deinen Rechner an — „8 Kerne erkannt, 4 schnelle,
-      4 sparsame" — und wählt eine vernünftige Voreinstellung. Vier Stufen stehen zur Wahl:</p>
+      4 sparsame“ — und wählt eine vernünftige Voreinstellung. Vier Stufen stehen zur Wahl:</p>
       <ul class="tiers reveal">
         <li><span class="name">Unauffällig</span><span class="desc">unter 1&#8201;% eines Kerns — der Lüfter bleibt aus (gemessen auf einem M1)</span></li>
         <li><span class="name">Sparsam</span><span class="desc">die sparsamen Kerne — kühl und leise</span></li>
@@ -416,7 +418,7 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
       <b style="color:var(--gold)">Zum Ausprobieren brauchst du keine echten Wörter.</b>
       <ul>
         <li>Herunterladen und starten.</li>
-        <li>„Seed retten" öffnen und auf <i>„Übungswörter würfeln"</i> drücken — das Programm
+        <li>„Seed retten“ öffnen und auf <i>„Übungswörter würfeln“</i> drücken — das Programm
         erfindet Wörter samt passender Adresse und lässt eins offen.</li>
         <li>Suche starten und zusehen, wie das fehlende Wort gefunden wird.</li>
       </ul>
@@ -426,7 +428,7 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
         ein bezahltes Entwicklerkonto. So kommst du am Hinweis vorbei:</p>
         <ul>
           <li><b>macOS</b> verweigert den ersten Start. Danach: <i>Systemeinstellungen → Datenschutz &amp;
-          Sicherheit → „Dennoch öffnen"</i>.</li>
+          Sicherheit → „Dennoch öffnen“</i>.</li>
           <li><b>Windows</b> zeigt einen SmartScreen-Hinweis: <i>Weitere Informationen → Trotzdem
           ausführen</i>.</li>
           <li>Wem das zu heikel ist: selbst bauen dauert eine Minute — <code>cargo build --release</code>,
