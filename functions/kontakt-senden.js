@@ -1,6 +1,11 @@
 /**
  * Nimmt das Kontaktformular von /kontakt entgegen und schickt den Inhalt
- * als E-Mail weiter. Läuft als Cloudflare Pages Function unter /kontakt.
+ * als E-Mail weiter. Läuft als Cloudflare Pages Function unter
+ * /kontakt-senden.
+ *
+ * Der eigene Pfad ist kein Schmuck: Bei Pages haben statische Dateien Vorrang
+ * vor Functions. Läge die Datei hier `kontakt.js`, würde `kontakt.html` sie
+ * verdecken und ein Absenden mit „405 Method Not Allowed" enden.
  *
  * Gespeichert wird hier nichts — weder die Nachricht noch die IP-Adresse. Was
  * ankommt, geht direkt weiter und ist danach nur noch im Postfach.
