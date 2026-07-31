@@ -3,16 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Schatzsuche — errät Bitcoin-Wallets, rettet halb vergessene Seeds</title>
-<meta name="description" content="Schatzsuche errät Bitcoin-Wallets — 3.343 pro Sekunde auf einem M1 — und beweist damit, dass das nicht funktioniert. Kennst du die meisten Wörter deines Seeds noch, findet es den Rest: gratis, offen, ohne Anteil. Zum Üben mit erfundenen Wörtern.">
+<title>Schatzsuche — findet die fehlenden Wörter deines Bitcoin-Seeds</title>
+<meta name="description" content="Kennst du die meisten Wörter deines Seeds noch, findet Schatzsuche den Rest: auf deinem Rechner, gratis, ohne Anteil. Zum Üben mit erfundenen Wörtern. Die Gegenprobe — Wallets raten, 3.343 pro Sekunde auf einem M1 — zeigt, dass es sonst keine Abkürzung gibt.">
 <link rel="canonical" href="https://21clubz.github.io/schatzsuche/">
 <meta name="theme-color" content="#0f0b07">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://21clubz.github.io/schatzsuche/">
 <meta property="og:locale" content="de_DE">
 <meta property="og:site_name" content="Schatzsuche">
-<meta property="og:title" content="Schatzsuche — ein Programm, das Bitcoin-Wallets errät">
-<meta property="og:description" content="…und dabei beweist, dass das nicht funktioniert. Erwartete Wartezeit bis zum ersten Treffer: 10¹⁹ × das Alter des Universums. Kennst du die meisten Wörter deines Seeds noch, findet es den Rest — gratis, offen, ohne Anteil.">
+<meta property="og:title" content="Schatzsuche — findet die fehlenden Wörter deines Seeds">
+<meta property="og:description" content="Kennst du die meisten Wörter noch, ist der Rest eine Liste — Schatzsuche geht sie durch, auf deinem Rechner, ohne Anteil. Die Gegenprobe: Beim Wallet-Raten wäre der erste Treffer nach 10¹⁹ × dem Alter des Universums fällig.">
 <meta property="og:image" content="https://21clubz.github.io/schatzsuche/assets/og-card.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -152,13 +152,6 @@ p + p { margin-top: .9rem; }
 .thenumber .huge small { display: block; font-size: clamp(1.15rem, 4vw, 2.2rem); margin-top: .5rem; }
 .thenumber .quote { max-width: 34ch; font-size: clamp(1rem, 2.4vw, 1.2rem); }
 
-/* ------- 3 · Zwei Türen ------- */
-.doors { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.2rem; }
-.door { padding: 1.7rem 1.6rem; text-align: center; }
-.door img { width: 108px; margin: 0 auto .9rem; filter: drop-shadow(0 8px 18px rgba(0,0,0,.6)); }
-.door h2 { color: var(--gold); font-size: 1.25rem; margin-bottom: .55rem; }
-.door p { color: var(--dim); font-size: .95rem; }
-
 /* ------- Text + Bild nebeneinander ------- */
 .split { display: grid; grid-template-columns: 1fr 1fr; gap: 2.4rem; align-items: center; }
 .split .shot { border-radius: 12px; border: 1px solid var(--frame); box-shadow: 0 18px 50px rgba(0,0,0,.6); }
@@ -233,7 +226,7 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
   "downloadUrl": "https://github.com/21clubz/schatzsuche/releases/latest",
   "author": { "@type": "Person", "name": "21clubz", "url": "https://x.com/21clubz" },
   "inLanguage": "de",
-  "description": "Errät Bitcoin-Wallets, um zu zeigen, dass das nicht funktioniert — und findet die restlichen Wörter eines Seeds, wenn die meisten noch bekannt sind. Kostenlos auf dem eigenen Rechner."
+  "description": "Findet die restlichen Wörter eines Bitcoin-Seeds, wenn die meisten noch bekannt sind — kostenlos auf dem eigenen Rechner. Errät außerdem Wallets aus dem Zufall und zeigt damit, dass es keine Abkürzung gibt."
 }
 </script>
 </head>
@@ -243,11 +236,98 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
 <section class="hero">
   <img class="chest" src="assets/icon.png" alt="Eine offene Holztruhe mit Karte, Kompass und Goldmünzen — das Zeichen von Schatzsuche" width="512" height="512">
   <div class="wordmark">SCHATZSUCHE</div>
-  <h1>Ein Programm, das Bitcoin-Wallets errät — <em>und dabei beweist, dass das nicht funktioniert.</em></h1>
-  <p style="max-width:46ch; font-size:1.08rem">Aber wenn du die meisten Wörter deines Seeds noch
-  kennst, <em style="font-style:normal; color:var(--gold)">findet dieselbe Maschine den Rest</em>.</p>
+  <h1>Ein Programm, das <em>die fehlenden Wörter deines Seeds</em> wiederfindet — wenn du die
+  meisten noch kennst.</h1>
+  <p style="max-width:48ch; font-size:1.08rem">Dasselbe Programm errät auch fremde Wallets — der
+  Zähler steht auf 0 und bleibt da. Wer weiß, was unmöglich ist,
+  <em style="font-style:normal; color:var(--gold)">weiß auch, was geht</em>.</p>
 
-  <div class="demo panel">
+  <div class="cta-row">
+    <a class="btn btn-gold" href="#herunterladen">Ausprobieren</a>
+    <a class="btn btn-wood" href="#ablauf">So läuft das ab</a>
+  </div>
+  <p class="fineprint">Die Gegenprobe läuft weiter unten:
+  <a href="#beweis">Wallets raten, null Treffer — der Beweis&nbsp;↓</a></p>
+</section>
+
+<!-- 2 · Der Normalfall -->
+<section id="seed-retten">
+  <div class="wrap split">
+    <div>
+      <div class="cap reveal">Seed retten</div>
+      <h2 class="reveal">Der Normalfall: ein, zwei Wörter fehlen</h2>
+      <p class="reveal">Ein Wort fehlt? Das sind 2.048 Möglichkeiten. Zwei? Ein paar Millionen.
+      Für deinen Rechner ist das eine kurze Liste — Schatzsuche probiert sie durch und hört auf,
+      wenn deine Adresse herauskommt.</p>
+      <p class="dimtext reveal">Drei offene Wörter gehen auch noch, das dauert eher einen Tag.
+      Ab vier sagt dir das Programm vor dem Start ehrlich: aussichtslos.</p>
+      <p class="dimtext reveal">Es gibt Dienste, die für genau diese Suche einen Anteil deiner
+      Wallet nehmen. Bei ein, zwei offenen Wörtern machen beide dasselbe:</p>
+      <ul class="tiers reveal">
+        <li><span class="name">Bezahlter Dienst</span><span class="desc">lässt ein Werkzeug dieselbe Liste durchgehen — und behält einen Teil deiner Wallet</span></li>
+        <li><span class="name" style="color:var(--gold)">Schatzsuche</span><span class="desc">dieselbe Suche auf deinem Rechner — kostenlos, deine Wörter bleiben bei dir</span></li>
+      </ul>
+      <p class="dimtext reveal">Fair bleibt fair: Schwere Fälle — kaputte Geräte, gelöschte
+      Datenträger — sind echte Forensik und echte Handarbeit. Um die geht es hier nicht.</p>
+    </div>
+    <img class="shot reveal" src="assets/recover.png" alt="Die Seed-Rettung in Schatzsuche: nummerierte Felder für die Wörter, erkannte Wörter grün markiert" width="1180" height="760" loading="lazy">
+  </div>
+</section>
+
+<!-- 3 · So läuft eine Rettung ab -->
+<section id="ablauf">
+  <div class="wrap">
+    <div class="cap reveal">Schritt für Schritt</div>
+    <h2 class="reveal">So läuft eine Rettung ab</h2>
+    <p class="dimtext reveal" style="max-width:44rem">Ein Assistent, vier Fragen — Länge, Wörter,
+    Adresse, Start. Zurück geht es jederzeit.</p>
+    <div class="proofs">
+      <div class="proof panel reveal">
+        <b>1 · Wörter eintragen</b>
+        <p>Füg alle auf einmal ein, ein <code>?</code> steht für ein fehlendes Wort. Beim Tippen
+        schlägt Schatzsuche die richtigen Wörter vor.</p>
+      </div>
+      <div class="proof panel reveal">
+        <b>2 · Sagen, was du weißt</b>
+        <p>Jedes Wort ist sicher, unsicher oder verrutscht — mehr musst du nicht wissen.
+        Den Rest macht das Programm.</p>
+      </div>
+      <div class="proof panel reveal">
+        <b>3 · Erst rechnen, dann starten</b>
+        <p>Vor dem Start rechnet es dir aus, wie lange die Suche dauert — und fragt, ob du willst.
+        Währenddessen siehst du die echte Restzeit.</p>
+      </div>
+      <div class="proof panel reveal">
+        <b>4 · Adresse? Hilft, muss aber nicht</b>
+        <p>Mit deiner Adresse bleibt am Ende genau ein Ergebnis übrig. Ohne bekommst du eine
+        kurze Liste zum Vergleichen.</p>
+      </div>
+    </div>
+    <div class="honest panel reveal">
+      <b style="color:var(--gold)">Was es ehrlich nicht kann</b>
+      <ul>
+        <li>Keine Passphrase, kein 25. Wort. Hat deine Wallet eine, ist das hier das falsche
+        Werkzeug.</li>
+        <li>Alle Wörter frei durchwürfeln lehnt es ab — nur eine zusammenhängende Gruppe von bis
+        zu acht Nachbarn darf vertauscht sein.</li>
+        <li>Vertipper sucht es nicht — die fängt schon die Eingabe ab: Vier Buchstaben treffen
+        ein Wort eindeutig.</li>
+      </ul>
+      <p class="dimtext" style="margin-top:.9rem">Üben kannst du ohne echte Wörter — mit
+      <i>„Übungswörter würfeln“</i>. <a href="#herunterladen" style="color:var(--gold)">Probier es
+      aus&nbsp;→</a></p>
+    </div>
+  </div>
+</section>
+
+<!-- 4 · Der Beweis -->
+<section class="thenumber" id="beweis">
+  <div class="lead reveal">Die Gegenprobe: Dasselbe Programm rät Wallets — erwartete Wartezeit bis zum ersten Treffer</div>
+  <div class="huge reveal">10¹⁹&#8202;×<small>das Alter des Universums</small></div>
+  <p class="quote reveal">Kein Fehler — das ist das Ergebnis, und es zeigt, warum Bitcoin sicher ist.</p>
+  <p class="dimtext reveal" style="max-width:40ch">2.048 Möglichkeiten je offenem Wort sind eine
+  Liste. Der ganze Schlüsselraum ist ein Universum.</p>
+  <div class="demo panel reveal">
     <div class="demo-grid">
       <div>
         <div class="bignum" id="rate">3&#8201;343</div>
@@ -261,72 +341,10 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
     </div>
     <div class="ticker" id="ticker" aria-hidden="true"></div>
     <p class="fineprint demo-note">Reine Nachbildung: Dieses Feld rechnet nichts Echtes — es zählt hoch und
-    würfelt Zeichenketten, die nur aussehen wie Adressen. Das echte Programm gibt es unten.</p>
+    würfelt Zeichenketten, die nur aussehen wie Adressen. Das echte Programm gibt es unter „Herunterladen“.</p>
   </div>
-
-  <div class="cta-row">
-    <a class="btn btn-gold" href="#herunterladen">Ausprobieren</a>
-    <a class="btn btn-wood" href="https://github.com/21clubz/schatzsuche">Quelltext ansehen</a>
-  </div>
-</section>
-
-<!-- 2 · Die Zahl -->
-<section class="thenumber">
-  <div class="lead reveal">Erwartete Wartezeit bis zum ersten Treffer</div>
-  <div class="huge reveal">10¹⁹&#8202;×<small>das Alter des Universums</small></div>
-  <p class="quote reveal">Kein Fehler — das ist das Ergebnis, und es zeigt, warum Bitcoin sicher ist.</p>
-  <p class="dimtext reveal" style="max-width:40ch">Die einzige Abkürzung ist dein Gedächtnis:
-  Kennst du die meisten Wörter deines Seeds noch, schrumpft das Universum auf eine Liste.</p>
   <p class="fineprint reveal">Gerechnet mit 3&#8201;343 Wallets pro Sekunde — voller Einsatz auf einem M1 —
   gegen eine Datenbank aus 5&#8201;Millionen Adressen.</p>
-</section>
-
-<!-- 3 · Zwei Türen -->
-<section>
-  <div class="wrap">
-    <div class="cap reveal">Zwei Türen</div>
-    <div class="doors">
-      <div class="door panel reveal">
-        <img src="assets/door-search.png" alt="Eine Holztür mit Kompassrose — die Tür zur Zufallssuche" width="256" height="256">
-        <h2>Wallets würfeln</h2>
-        <p>Echte BIP-39-Seeds aus dem Zufall des Betriebssystems, abgeleitet und gegen fünf Millionen
-        Adressen mit Guthaben geprüft. Der Trefferzähler steht auf 0 und bleibt da — genau das ist
-        der Beweis.</p>
-      </div>
-      <div class="door panel reveal">
-        <img src="assets/door-recover.png" alt="Eine Holztür mit Schlüssel — die Tür zur Seed-Rettung" width="256" height="256">
-        <h2>Seed retten</h2>
-        <p>Du kennst die meisten deiner Wörter und deine Adresse? Dann ist der Rest kein Zufall mehr,
-        sondern eine Liste, die jemand durchgehen muss. Schatzsuche geht sie durch — auf deinem
-        Rechner.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- 4 · Seed retten -->
-<section id="seed-retten">
-  <div class="wrap split">
-    <div>
-      <div class="cap reveal">Die zweite Tür</div>
-      <h2 class="reveal">Halb vergessene Seeds retten</h2>
-      <p class="reveal">Der Normalfall sieht so aus: 21 von 24 Wörtern sitzen, bei dreien bist du dir
-      nicht sicher — und deine Adresse kennst du. Das ist kein Glücksspiel gegen 2²⁵⁶ mehr, sondern
-      eine endliche Liste von Kombinationen. Schatzsuche probiert sie der Reihe nach durch und hört
-      auf, wenn deine Adresse dabei herauskommt.</p>
-      <p class="dimtext reveal">Es gibt Dienste, die dafür einen Anteil deiner Wallet nehmen.
-      In diesem Normalfall machen beide dasselbe:</p>
-      <ul class="tiers reveal">
-        <li><span class="name">Bezahlter Dienst</span><span class="desc">lässt ein Werkzeug über die Liste laufen — und behält einen Teil deiner Wallet</span></li>
-        <li><span class="name" style="color:var(--gold)">Schatzsuche</span><span class="desc">dieselbe Suche auf deinem Rechner — kostenlos und nachlesbar</span></li>
-      </ul>
-      <p class="dimtext reveal">Fair bleibt fair: Schwere Fälle — kaputte Geräte, gelöschte
-      Datenträger — sind echte Forensik und echte Handarbeit. Um die geht es hier nicht.</p>
-      <p class="dimtext reveal">Üben kannst du vorher mit erfundenen Wörtern — ganz ohne deinen
-      echten Seed. <a href="#herunterladen" style="color:var(--gold)">Probier es aus&nbsp;→</a></p>
-    </div>
-    <img class="shot reveal" src="assets/recover.png" alt="Die Seed-Rettung in Schatzsuche: nummerierte Felder für die Wörter, erkannte Wörter grün markiert" width="1180" height="760" loading="lazy">
-  </div>
 </section>
 
 <!-- 5 · Kein Angriffswerkzeug -->
@@ -465,7 +483,7 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
     <a href="https://github.com/21clubz/schatzsuche">Quelltext auf GitHub</a>
     <a href="https://x.com/21clubz">@21clubz</a>
   </div>
-  <p class="fineprint">Es findet nichts. Nicht selten — nie. Wer dir etwas anderes verspricht, verkauft
+  <p class="fineprint">Wallets raten findet nichts. Nicht selten — nie. Wer dir etwas anderes verspricht, verkauft
   dir etwas.<br>Überschriften-Schrift: Ubuntu Bold, <a href="assets/UBUNTU-FONT-LICENCE.txt">Ubuntu Font Licence</a>.</p>
 </footer>
 
