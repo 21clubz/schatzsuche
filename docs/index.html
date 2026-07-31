@@ -60,7 +60,7 @@ h1, h2, h3, .wordmark, .bignum { font-family: "Ubuntu Bold", system-ui, sans-ser
 img { max-width: 100%; height: auto; display: block; }
 a { color: var(--blue); }
 
-section { padding: 4rem 1.25rem; padding: clamp(3.5rem, 9vw, 7rem) 1.25rem; }
+section { padding: 3.5rem 1.25rem; padding: clamp(3rem, 7vw, 5rem) 1.25rem; }
 .wrap { max-width: 62rem; margin: 0 auto; }
 .narrow { max-width: 44rem; margin: 0 auto; }
 
@@ -105,8 +105,8 @@ p + p { margin-top: .9rem; }
 
 /* ------- 1 · Kopf ------- */
 .hero {
-  min-height: 100vh;
-  min-height: 100svh;
+  min-height: min(100vh, 44rem);
+  min-height: min(100svh, 44rem);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   text-align: center; gap: 1.1rem; padding-top: 4rem; padding-bottom: 4rem;
 }
@@ -461,20 +461,7 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
   </div>
 </section>
 
-<!-- 8 · Impressum -->
-<section id="impressum" style="padding-top:3rem; padding-bottom:3rem">
-  <div class="narrow">
-    <div class="cap">Impressum</div>
-    <p class="fineprint">Angaben gemäß § 5 DDG</p>
-    <p class="fineprint" style="margin-top:.7rem">Dustin Tur<br>
-    c/o IP-Management #11251<br>
-    Ludwig-Erhard-Straße 18<br>
-    20459 Hamburg</p>
-    <p class="fineprint">E-Mail: <a href="mailto:schatzsuche-bitcoin@proton.me">schatzsuche-bitcoin@proton.me</a></p>
-  </div>
-</section>
-
-<!-- 9 · Fuß -->
+<!-- 8 · Fuß -->
 <footer>
   <div class="row">
     <a href="#herunterladen">Herunterladen</a>
@@ -485,6 +472,8 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
   </div>
   <p class="fineprint">Wallets raten findet nichts. Nicht selten — nie. Wer dir etwas anderes verspricht, verkauft
   dir etwas.<br>Überschriften-Schrift: Ubuntu Bold, <a href="assets/UBUNTU-FONT-LICENCE.txt">Ubuntu Font Licence</a>.</p>
+  <p class="fineprint" id="impressum">Impressum (Angaben gemäß § 5 DDG): Dustin Tur · c/o IP-Management #11251 ·
+  Ludwig-Erhard-Straße 18 · 20459 Hamburg · <a href="mailto:schatzsuche-bitcoin@proton.me">schatzsuche-bitcoin@proton.me</a></p>
 </footer>
 
 <script>
