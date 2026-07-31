@@ -3,6 +3,8 @@
 **Ein Programm, das zufällige Bitcoin-Wallets errät — und dabei beweist, dass das
 nicht funktioniert.**
 
+Website: **[schatzsuche-bitcoin.com](https://schatzsuche-bitcoin.com)**
+
 Schatzsuche würfelt BIP-39-Seeds aus echter Betriebssystem-Entropie, leitet für
 jeden die BIP-44/49/84-Adressen ab und prüft sie gegen eine lokale Liste von
 Adressen mit Guthaben. Dann rechnet es aus, wie lange ein Treffer dauern würde,
