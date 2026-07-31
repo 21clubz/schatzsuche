@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kontakt — Schatzsuche</title>
+<meta name="description" content="Nachricht an den Entwickler von Schatzsuche — ohne Konto, ohne Cookies.">
+<link rel="canonical" href="https://schatzsuche-bitcoin.com/kontakt.html">
+<meta name="theme-color" content="#0f0b07">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<link rel="stylesheet" href="assets/recht.css">
+</head>
+<body>
+
+<div class="topbar">
+  <a href="index.html">
+    <img src="assets/icon.png" alt="" width="512" height="512">
+    <span class="wordmark">SCHATZSUCHE</span>
+  </a>
+</div>
+
+<main>
+  <h1>Kontakt</h1>
+  <p class="stand">Fragen, Fehler, Rückmeldungen — alles willkommen.</p>
+
+  <div class="panel">
+    <p><b>Schick mir hier niemals deine Seed-Wörter.</b> Es gibt keinen Grund, sie
+    jemandem zu zeigen, mich eingeschlossen. Wer dich danach fragt, will dein
+    Geld — auch wenn er behauptet, dir helfen zu wollen. Das Programm braucht
+    deine Wörter nur auf deinem eigenen Rechner.</p>
+  </div>
+
+  <form id="formular" action="/kontakt" method="post" novalidate>
+    <label>
+      <span class="name">Name <span class="hint">— freiwillig</span></span>
+      <input type="text" name="name" maxlength="100" autocomplete="name">
+    </label>
+
+    <label>
+      <span class="name">E-Mail <span class="hint">— damit ich antworten kann</span></span>
+      <input type="email" name="email" maxlength="200" required autocomplete="email">
+    </label>
+
+    <label>
+      <span class="name">Nachricht</span>
+      <textarea name="nachricht" maxlength="5000" required></textarea>
+    </label>
+
+    <!-- Honigtopf: für Menschen unsichtbar, Bots füllen ihn aus. -->
+    <div class="honigtopf" aria-hidden="true">
+      <label>Webseite <input type="text" name="webseite" tabindex="-1" autocomplete="off"></label>
+    </div>
+
+    <button type="submit" id="senden">Nachricht senden</button>
+
+    <p class="fineprint" style="margin-top:1rem">Übertragen wird nur, was du hier
+    einträgst. Die Seite speichert nichts davon, es werden keine Cookies gesetzt
+    und deine IP-Adresse wird nicht mitgespeichert. Wie die Nachricht in mein
+    Postfach kommt, steht im <a href="datenschutz.html">Datenschutz</a>.</p>
+  </form>
+
+  <div id="meldung" class="meldung" role="status" hidden></div>
+
+  <noscript>
+    <div class="meldung schlecht">Das Formular braucht JavaScript, um die Antwort
+    hier anzuzeigen. Ohne JavaScript funktioniert das Absenden trotzdem — oder
+    schreib direkt an
+    <a href="mailto:schatzsuche-bitcoin@proton.me">schatzsuche-bitcoin@proton.me</a>.</div>
+  </noscript>
+
+  <h2>Direkt per E-Mail</h2>
+  <p>Wenn dir das lieber ist:
+  <a href="mailto:schatzsuche-bitcoin@proton.me">schatzsuche-bitcoin@proton.me</a>.
+  Antwort in der Regel innerhalb eines Werktags.</p>
+
+  <h2>Fehler im Programm</h2>
+  <p>Für alles, was den Quelltext betrifft, ist GitHub der bessere Ort — dort
+  bleibt es auffindbar für andere mit demselben Problem:
+  <a href="https://github.com/21clubz/schatzsuche/issues" target="_blank" rel="noopener">Issues auf GitHub</a>.</p>
+</main>
+
+<footer>
+  <div class="row">
+    <a href="index.html">Startseite</a>
+    <a href="impressum.html">Impressum</a>
+    <a href="datenschutz.html">Datenschutz</a>
+    <a href="https://github.com/21clubz/schatzsuche">Quelltext auf GitHub</a>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  var formular = document.getElementById("formular");
+  var knopf = document.getElementById("senden");
+  var meldung = document.getElementById("meldung");
+
+  function zeigen(art, text) {
+    meldung.className = "meldung " + art;
+    meldung.textContent = text;
+    meldung.hidden = false;
+  }
+
+  formular.addEventListener("submit", function (e) {
+    e.preventDefault();
+    meldung.hidden = true;
+
+    var daten = new FormData(formular);
+    if (!daten.get("email").trim() || !daten.get("nachricht").trim()) {
+      zeigen("schlecht", "Bitte trag eine E-Mail-Adresse und eine Nachricht ein.");
+      return;
+    }
+
+    knopf.disabled = true;
+    knopf.textContent = "Wird gesendet …";
+
+    fetch(formular.action, {
+      method: "POST",
+      body: daten,
+      headers: { "Accept": "application/json" }
+    })
+      .then(function (antwort) {
+        return antwort.json().catch(function () { return { ok: antwort.ok }; });
+      })
+      .then(function (ergebnis) {
+        if (ergebnis && ergebnis.ok) {
+          formular.hidden = true;
+          zeigen("gut", "Angekommen. Ich melde mich in der Regel innerhalb eines Werktags.");
+        } else {
+          zeigen("schlecht", (ergebnis && ergebnis.fehler) ||
+            "Das hat nicht geklappt. Schreib mir bitte direkt an schatzsuche-bitcoin@proton.me.");
+        }
+      })
+      .catch(function () {
+        zeigen("schlecht", "Keine Verbindung zum Server. Schreib mir bitte direkt an schatzsuche-bitcoin@proton.me.");
+      })
+      .then(function () {
+        knopf.disabled = false;
+        knopf.textContent = "Nachricht senden";
+      });
+  });
+})();
+</script>
+
+</body>
+</html>

@@ -251,7 +251,7 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
   "downloadUrl": "https://github.com/21clubz/schatzsuche/releases/latest",
   "author": { "@type": "Person", "name": "21clubz", "url": "https://x.com/21clubz" },
   "inLanguage": "de",
-  "description": "Findet die restlichen Wörter eines Bitcoin-Seeds, wenn die meisten noch bekannt sind — kostenlos auf dem eigenen Rechner. Errät außerdem Wallets aus dem Zufall und zeigt damit, dass es keine Abkürzung gibt."
+  "description": "Findet die restlichen Wörter eines Bitcoin-Seeds, wenn die meisten noch bekannt sind — kostenlos auf dem eigenen Rechner. Als Gegenprobe rät es Seeds aus dem Zufall und zeigt damit, dass es diese Abkürzung nicht gibt."
 }
 </script>
 </head>
@@ -388,8 +388,9 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
       </div>
       <div class="proof panel reveal">
         <b>Nichts verlässt deinen Rechner</b>
-        <p>Kein Server, kein Konto, kein Mitzählen. Ein Treffer landet auf deiner Festplatte und
-        sonst nirgends.</p>
+        <p>Kein Konto, kein Mitzählen. Ein Treffer landet auf deiner Festplatte und sonst nirgends.
+        Ins Netz geht nur, was du selbst auslöst: der Knopf „Kontostand online prüfen“ und
+        eingeschaltete Benachrichtigungen — und beide kennen deine Wörter nicht.</p>
       </div>
       <div class="proof panel reveal">
         <b>Benachrichtigungen ohne Seed</b>
@@ -400,6 +401,11 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
         <b>Nachprüfbar statt versprochen</b>
         <p>MIT-Lizenz — der ganze Quelltext liegt offen. Der Kern steht in <code>src/engine.rs</code>:
         Zufall rein, nichts dazwischen.</p>
+      </div>
+      <div class="proof panel reveal" style="grid-column: 1 / -1">
+        <b>Ein Fund gehört nicht dir</b>
+        <p>Sollte wider Erwarten je eine fremde Wallet auftauchen: Das Guthaben gehört jemand
+        anderem. Es auszugeben ist Diebstahl, egal wie der Schlüssel zustande kam.</p>
       </div>
     </div>
   </div>
@@ -490,7 +496,9 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
 <footer>
   <div class="row">
     <a href="#herunterladen">Herunterladen</a>
-    <a href="#impressum">Impressum</a>
+    <a href="impressum.html">Impressum</a>
+    <a href="datenschutz.html">Datenschutz</a>
+    <a href="kontakt.html">Kontakt</a>
     <a href="https://github.com/21clubz/schatzsuche/blob/main/LICENSE">MIT-Lizenz</a>
     <a href="https://github.com/21clubz/schatzsuche">Quelltext auf GitHub</a>
     <a href="https://x.com/21clubz">@21clubz</a>
@@ -508,8 +516,9 @@ footer .fineprint { text-align: center; margin-top: 1rem; }
       </div>
     </div>
   </div>
-  <p class="fineprint" id="impressum">Impressum (Angaben gemäß § 5 DDG): Dustin Tur · c/o IP-Management #11251 ·
-  Ludwig-Erhard-Straße 18 · 20459 Hamburg · <a href="mailto:schatzsuche-bitcoin@proton.me">schatzsuche-bitcoin@proton.me</a></p>
+  <p class="fineprint" id="impressum">Dustin Tur · c/o IP-Management #11251 ·
+  Ludwig-Erhard-Straße 18 · 20459 Hamburg · <a href="mailto:schatzsuche-bitcoin@proton.me">schatzsuche-bitcoin@proton.me</a><br>
+  Vollständige Angaben nach § 5 DDG im <a href="impressum.html">Impressum</a>.</p>
 </footer>
 
 <script>
