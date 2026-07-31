@@ -7,11 +7,13 @@
  * vor Functions. Läge die Datei hier `kontakt.js`, würde `kontakt.html` sie
  * verdecken und ein Absenden mit „405 Method Not Allowed" enden.
  *
- * ACHTUNG, noch nicht scharf: Das Pages-Projekt kompiliert dieses Verzeichnis
- * derzeit nicht — ein POST auf /kontakt-senden endet mit 404. Am Ort liegt es
- * nicht (hier ist die von Cloudflare dokumentierte Stelle); es fehlt eine
- * Einstellung im Projekt. Bis dahin zeigt das Formular ehrlich die
- * E-Mail-Adresse als Ausweichweg. Schritte dazu stehen in
+ * ACHTUNG, noch nicht scharf: Dieses Verzeichnis wird derzeit nicht gebaut, ein
+ * POST auf /kontakt-senden endet mit 404. Der Grund ist die Projektart — das
+ * Cloudflare-Projekt ist ein Worker mit statischen Dateien, kein
+ * Pages-Projekt, und `functions/` ist eine reine Pages-Vorrichtung. Nötig ist
+ * eine `wrangler.jsonc` mit `main` auf ein Worker-Skript und `assets` auf
+ * `docs`; dann zieht der Inhalt hier dorthin um. Bis dahin zeigt das Formular
+ * ehrlich die E-Mail-Adresse als Ausweichweg. Schritte in
  * ~/Desktop/schatzsuche-kontaktformular-anleitung.md.
  *
  * Gespeichert wird hier nichts — weder die Nachricht noch die IP-Adresse. Was
