@@ -1,5 +1,5 @@
 /**
- * Nimmt das Kontaktformular von /kontakt.html entgegen und schickt den Inhalt
+ * Nimmt das Kontaktformular von /kontakt entgegen und schickt den Inhalt
  * als E-Mail weiter. Läuft als Cloudflare Pages Function unter /kontakt.
  *
  * Gespeichert wird hier nichts — weder die Nachricht noch die IP-Adresse. Was
@@ -36,11 +36,11 @@ function antwort(anfrage, status, ok, text) {
 <title>${ok ? "Angekommen" : "Nicht geklappt"} — Schatzsuche</title>
 <link rel="icon" type="image/png" href="/assets/favicon.png">
 <link rel="stylesheet" href="/assets/recht.css"></head><body>
-<div class="topbar"><a href="/index.html"><img src="/assets/icon.png" alt="" width="512" height="512">
+<div class="topbar"><a href="/"><img src="/assets/icon.png" alt="" width="512" height="512">
 <span class="wordmark">SCHATZSUCHE</span></a></div>
 <main><h1>${ok ? "Angekommen" : "Das hat nicht geklappt"}</h1>
 <div class="meldung ${ok ? "gut" : "schlecht"}">${text}</div>
-<p style="margin-top:1.6rem"><a href="/kontakt.html">← Zurück zum Formular</a></p></main>
+<p style="margin-top:1.6rem"><a href="/kontakt">← Zurück zum Formular</a></p></main>
 </body></html>`;
   return new Response(seite, {
     status,
@@ -116,5 +116,5 @@ export async function onRequestPost({ request, env }) {
 
 /** Wer /kontakt direkt aufruft, landet auf dem Formular. */
 export async function onRequestGet() {
-  return Response.redirect("https://schatzsuche-bitcoin.com/kontakt.html", 302);
+  return Response.redirect("https://schatzsuche-bitcoin.com/kontakt", 302);
 }
