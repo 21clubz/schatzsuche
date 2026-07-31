@@ -1,24 +1,28 @@
 /**
- * Nimmt das Kontaktformular von /kontakt entgegen und schickt den Inhalt als
- * E-Mail weiter. Alles andere reicht diese Datei unverändert an die statischen
- * Seiten durch.
+ * Nimmt das Kontaktformular von /kontakt entgegen und schickt den Inhalt
+ * als E-Mail weiter. Läuft als Cloudflare Pages Function unter
+ * /kontakt-senden.
  *
- * Warum hier und nicht in `functions/`: Der ausgelieferte Ordner ist `docs`,
- * und ein `functions/`-Verzeichnis daneben wird in diesem Projekt nicht
- * kompiliert — es landete stattdessen als sichtbare Datei im Netz. Ein
- * `_worker.js` im ausgelieferten Ordner greift unabhängig davon, wie die
- * Wurzel im Pages-Projekt eingestellt ist.
+ * Der eigene Pfad ist kein Schmuck: Bei Pages haben statische Dateien Vorrang
+ * vor Functions. Läge die Datei hier `kontakt.js`, würde `kontakt.html` sie
+ * verdecken und ein Absenden mit „405 Method Not Allowed" enden.
+ *
+ * ACHTUNG, noch nicht scharf: Das Pages-Projekt kompiliert dieses Verzeichnis
+ * derzeit nicht — ein POST auf /kontakt-senden endet mit 404. Am Ort liegt es
+ * nicht (hier ist die von Cloudflare dokumentierte Stelle); es fehlt eine
+ * Einstellung im Projekt. Bis dahin zeigt das Formular ehrlich die
+ * E-Mail-Adresse als Ausweichweg. Schritte dazu stehen in
+ * ~/Desktop/schatzsuche-kontaktformular-anleitung.md.
  *
  * Gespeichert wird hier nichts — weder die Nachricht noch die IP-Adresse. Was
  * ankommt, geht direkt weiter und ist danach nur noch im Postfach.
  *
  * Nötige Einstellungen im Pages-Projekt:
- *   BREVO_API_KEY   (Secret)   — der Schlüssel von Brevo
+ *   BREVO_API_KEY   (Secret)  — der Schlüssel von Brevo
  *   KONTAKT_AN      (optional) — Empfängeradresse, sonst die unten voreingestellte
  *   KONTAKT_VON     (optional) — Absenderadresse, muss bei Brevo bestätigt sein
  */
 
-const PFAD = "/kontakt-senden";
 const AN_VOREINSTELLUNG = "schatzsuche-bitcoin@proton.me";
 const VON_VOREINSTELLUNG = "kontakt@schatzsuche-bitcoin.com";
 
@@ -56,7 +60,7 @@ function antwort(anfrage, status, ok, text) {
   });
 }
 
-async function nachrichtAnnehmen(request, env) {
+export async function onRequestPost({ request, env }) {
   let formular;
   try {
     formular = await request.formData();
@@ -122,17 +126,7 @@ async function nachrichtAnnehmen(request, env) {
     "Angekommen. Ich melde mich in der Regel innerhalb eines Werktags.");
 }
 
-export default {
-  async fetch(request, env) {
-    const pfad = new URL(request.url).pathname;
-
-    if (pfad === PFAD) {
-      if (request.method === "POST") return nachrichtAnnehmen(request, env);
-      // Wer den Endpunkt von Hand aufruft, landet auf dem Formular.
-      return Response.redirect(new URL("/kontakt", request.url).toString(), 302);
-    }
-
-    // Alles andere ist eine ganz normale Seite.
-    return env.ASSETS.fetch(request);
-  },
-};
+/** Wer /kontakt direkt aufruft, landet auf dem Formular. */
+export async function onRequestGet() {
+  return Response.redirect("https://schatzsuche-bitcoin.com/kontakt", 302);
+}
