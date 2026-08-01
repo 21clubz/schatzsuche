@@ -1,0 +1,19 @@
+// Sagt Cloudflare, was die Website ist: ein kleines Programm (`main`) und ein
+// Ordner voller fertiger Seiten (`assets`).
+//
+// Vorher stand das nur in den Projekteinstellungen im Cloudflare-Dashboard.
+// Damit ließ sich zwar ausliefern, aber kein einziger eigener Handgriff
+// unterbringen — das Kontaktformular hatte deshalb keine Gegenstelle.
+//
+// `binding: "ASSETS"` ist der Griff, mit dem `worker/index.js` die fertigen
+// Seiten selbst holen kann. Statische Dateien werden ohnehin zuerst bedient;
+// das Programm sieht nur, wofür es keine Datei gibt.
+{
+  "name": "schatzsuche",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-07-31",
+  "assets": {
+    "directory": "./docs",
+    "binding": "ASSETS"
+  }
+}
